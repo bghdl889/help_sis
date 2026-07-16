@@ -1,60 +1,33 @@
 import React, { useState } from "react";
 import {
-  Bell,
-  ChevronDown,
-  ChevronRight,
   ClipboardCheck,
-  LogIn,
+  LogOut,
   MoreHorizontal,
   Download,
-  RefreshCw,
-  Check,
   Plus,
   SlidersHorizontal,
   UserRound,
   X,
+  ChevronRight,
 } from "lucide-react";
 
-type View = "quality" | "rules";
-
-const cases = [
-  [
-    "用户01363539162",
-    "吉时活动结束后未返金币",
-    "VIP13",
-    "活动 / 玩法咨询",
-    "等待 2h 13m",
-  ],
-  [
-    "V2055A",
-    "贵族礼包领取异常",
-    "VIP14",
-    "福利 / 添加咨询",
-    "等待 1h 46m",
-  ],
-  [
-    "大有可为双鱼座",
-    "为什么没有超值返利",
-    "VIP17",
-    "活动 / 玩法咨询",
-    "等待 48m",
-  ],
-  [
-    "机械鲨富大傻俏",
-    "BOSS 试练活动充值问题",
-    "VIP23",
-    "充值 / 订单",
-    "等待 20m",
-  ],
-];
+type Role = "agent" | "inspector";
+type Account = { name: string; password: string; role: Role };
+type View = "quality" | "rules" | "records";
 
 function PluginSidebar({
   view,
   setView,
+  currentUser,
+  onLogout,
 }: {
   view: View;
   setView: (view: View) => void;
+  currentUser: Account;
+  onLogout: () => void;
 }) {
+  const isInspector = currentUser.role === "inspector";
+  const roleLabel = isInspector ? "质检人员" : "客服";
   return (
     <aside className="flex w-[184px] shrink-0 flex-col bg-[#293542] px-3 py-4 text-[#c5ced8]">
       <div className="mb-7 flex items-center gap-2 px-2">
@@ -73,37 +46,58 @@ function PluginSidebar({
       <div className="mb-2 px-2 text-[10px] font-medium tracking-[0.12em] text-[#8896a4]">
         工作台
       </div>
-      <button
-        onClick={() => setView("quality")}
-        className={`mb-1 flex h-10 items-center gap-2.5 rounded-md px-3 text-left text-[12px] transition ${view === "quality" ? "bg-[#4b7ff0] font-medium text-white shadow-sm" : "hover:bg-[#354454]"}`}
-      >
-        <ClipboardCheck className="size-4" />
-        客服质检
-      </button>
-      <button
-        onClick={() => setView("rules")}
-        className={`flex h-10 items-center gap-2.5 rounded-md px-3 text-left text-[12px] transition ${view === "rules" ? "bg-[#4b7ff0] font-medium text-white shadow-sm" : "hover:bg-[#354454]"}`}
-      >
-        <SlidersHorizontal className="size-4" />
-        质检规则管理
-      </button>
-      <div className="mt-auto border-t border-[#465361] pt-3">
-        <button className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-[12px] hover:bg-[#354454]">
-          <LogIn className="size-4" />
-          登录 / 切换账号
+      {isInspector ? (
+        <>
+          <button
+            onClick={() => setView("quality")}
+            className={`mb-1 flex h-10 items-center gap-2.5 rounded-md px-3 text-left text-[12px] transition ${view === "quality" ? "bg-[#4b7ff0] font-medium text-white shadow-sm" : "hover:bg-[#354454]"}`}
+          >
+            <ClipboardCheck className="size-4" />
+            任务管理
+          </button>
+          <button
+            onClick={() => setView("rules")}
+            className={`flex h-10 items-center gap-2.5 rounded-md px-3 text-left text-[12px] transition ${view === "rules" ? "bg-[#4b7ff0] font-medium text-white shadow-sm" : "hover:bg-[#354454]"}`}
+          >
+            <SlidersHorizontal className="size-4" />
+            规则设置
+          </button>
+        </>
+      ) : (
+        <button
+          onClick={() => setView("records")}
+          className={`flex h-10 items-center gap-2.5 rounded-md px-3 text-left text-[12px] transition ${view === "records" ? "bg-[#4b7ff0] font-medium text-white shadow-sm" : "hover:bg-[#354454]"}`}
+        >
+          <UserRound className="size-4" />
+          个人记录
         </button>
+      )}
+      <div className="mt-auto border-t border-[#465361] pt-3">
+        <div className="flex items-center gap-2 px-1">
+          <div className="grid size-8 shrink-0 place-items-center rounded-full bg-[#4d82f6] text-[13px] font-semibold text-white">
+            {currentUser.name.slice(0, 1)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[12px] font-medium text-white">{currentUser.name}</div>
+            <div className="text-[10px] text-[#9eabb9]">{roleLabel}</div>
+          </div>
+          <button onClick={onLogout} title="退出登录" className="grid size-7 shrink-0 place-items-center rounded-md text-[#9eabb9] hover:bg-[#354454] hover:text-white">
+            <LogOut className="size-4" />
+          </button>
+        </div>
       </div>
     </aside>
   );
 }
 
-function QualityHome({ commonCats, privateCats, onGoToRule }: { commonCats: Cat[]; privateCats: Cat[]; onGoToRule: (name: string) => void }) {
+function QualityHome({ commonCats, privateCats, openTaskName, setOpenTaskName, onGoToRule }: { commonCats: Cat[]; privateCats: Cat[]; openTaskName: string | null; setOpenTaskName: (name: string | null) => void; onGoToRule: (name: string) => void }) {
   type TaskRow = { name: string; status: string; note: string; date: string };
   const [tasks, setTasks] = useState<TaskRow[]>([
     { name: "2024-10-10 客诉服务质检", status: "进行中", note: "十月第二周", date: "2024-10-10" },
     { name: "2024-10-03 客诉服务质检", status: "已完成", note: "十月第一周", date: "2024-10-03" },
   ]);
-  const [detailTask, setDetailTask] = useState<TaskRow | null>(null);
+  const detailTask = openTaskName ? tasks.find(t => t.name === openTaskName) ?? null : null;
+  const setDetailTask = (task: TaskRow | null) => setOpenTaskName(task ? task.name : null);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [editingCell, setEditingCell] = useState<{ name: string; field: "name" | "note" } | null>(null);
@@ -122,7 +116,7 @@ function QualityHome({ commonCats, privateCats, onGoToRule }: { commonCats: Cat[
       : t
     ));
     if (editingCell.field === "name" && detailTask?.name === task.name) {
-      setDetailTask(prev => prev ? { ...prev, name: editingValue.trim() || prev.name } : prev);
+      setOpenTaskName(editingValue.trim() || task.name);
     }
     setEditingCell(null);
   }
@@ -372,7 +366,6 @@ function RulesList({
   setCats,
   targetRuleName,
   onTargetConsumed,
-  onBack,
 }: {
   label: string;
   sublabel: string;
@@ -380,7 +373,6 @@ function RulesList({
   setCats: React.Dispatch<React.SetStateAction<Cat[]>>;
   targetRuleName?: string | null;
   onTargetConsumed?: () => void;
-  onBack?: () => void;
 }) {
   const [menuOpenIdx, setMenuOpenIdx] = useState<number | null>(null);
   const [catNameDraft, setCatNameDraft] = useState("");
@@ -540,11 +532,6 @@ function RulesList({
                     {/* 配置面板 */}
                     {isEditing && draft && (
                       <div className="mb-3 rounded-md border border-[#dfe7f4] bg-[#f8fbff] p-3">
-                        {onBack && targetRuleName === dim.title && (
-                          <button onClick={onBack} className="mb-2 flex items-center gap-1 rounded-md border border-[#4b7ff0] bg-[#eaf2ff] px-2.5 py-1.5 text-[10px] font-medium text-[#3562c8] hover:bg-[#dceeff] w-full justify-center">
-                            <ChevronRight className="size-3 rotate-180" />返回复核结果
-                          </button>
-                        )}
                         <div className="mb-2 flex items-center justify-between">
                           <span className="text-[11px] font-medium text-[#496078]">编辑维度</span>
                           <div className="flex gap-2">
@@ -605,10 +592,11 @@ function RulesList({
   );
 }
 
-function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, targetRuleName, onTargetConsumed, onBack }: {
+function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, targetRuleName, onTargetConsumed, showBack, onBack }: {
   commonCats: Cat[]; setCommonCats: React.Dispatch<React.SetStateAction<Cat[]>>;
   privateCats: Cat[]; setPrivateCats: React.Dispatch<React.SetStateAction<Cat[]>>;
   targetRuleName: string | null; onTargetConsumed: () => void;
+  showBack?: boolean;
   onBack?: () => void;
 }) {
   const inCommon = targetRuleName ? commonCats.some(c => c.dimensions.some(d => d.title === targetRuleName)) : false;
@@ -629,6 +617,11 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, tar
           <h1 className="text-[15px] font-semibold text-[#2f3b48]">质检规则管理</h1>
           <p className="mt-0.5 text-[10px] text-[#8b96a3]">配置规则门类、评分维度与扣分标准</p>
         </div>
+        {showBack && onBack && (
+          <button onClick={onBack} className="flex items-center gap-1 rounded-md border border-[#4b7ff0] bg-[#eaf2ff] px-2.5 py-1.5 text-[10px] font-medium text-[#3562c8] hover:bg-[#dceeff]">
+            <ChevronRight className="size-3 rotate-180" />返回复核结果
+          </button>
+        )}
       </header>
       <div className="min-h-0 flex-1 overflow-auto p-5">
         <div className="mb-3 flex w-fit rounded-md border border-[#dfe5ea] bg-white p-0.5">
@@ -636,10 +629,153 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, tar
           <button onClick={() => setTab("private")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "private" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>专用质检规则列表</button>
         </div>
         {tab === "common" ? (
-          <RulesList label="通用规则" sublabel="适用于全部客服会话的基础质检要求" cats={commonCats} setCats={setCommonCats} targetRuleName={tab === "common" ? targetRuleName : null} onTargetConsumed={onTargetConsumed} onBack={onBack}/>
+          <RulesList label="通用规则" sublabel="适用于全部客服会话的基础质检要求" cats={commonCats} setCats={setCommonCats} targetRuleName={tab === "common" ? targetRuleName : null} onTargetConsumed={onTargetConsumed}/>
         ) : (
-          <RulesList label="专用规则" sublabel="仅对指定业务线、活动或场景生效" cats={privateCats} setCats={setPrivateCats} targetRuleName={tab === "private" ? targetRuleName : null} onTargetConsumed={onTargetConsumed} onBack={onBack}/>
+          <RulesList label="专用规则" sublabel="仅对指定业务线、活动或场景生效" cats={privateCats} setCats={setPrivateCats} targetRuleName={tab === "private" ? targetRuleName : null} onTargetConsumed={onTargetConsumed}/>
         )}
+      </div>
+    </div>
+  );
+}
+
+function AgentRecords({ currentUser }: { currentUser: Account }) {
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#f7f8fa]">
+      <header className="flex h-[58px] items-center justify-between border-b border-[#e2e6eb] bg-white px-5">
+        <div>
+          <h1 className="text-[15px] font-semibold text-[#2f3b48]">个人记录</h1>
+          <p className="mt-0.5 text-[10px] text-[#8b96a3]">{currentUser.name}的质检得分与被质检明细</p>
+        </div>
+      </header>
+      <div className="grid min-h-0 flex-1 place-items-center p-5">
+        <div className="text-center">
+          <div className="mx-auto mb-3 grid size-12 place-items-center rounded-full bg-[#eef2f7] text-[#b0bbc8]">
+            <UserRound className="size-6" />
+          </div>
+          <div className="text-[12px] text-[#8b97a3]">暂无记录</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuthScreen({
+  authView,
+  setAuthView,
+  accounts,
+  onRegister,
+  onLogin,
+}: {
+  authView: "login" | "register";
+  setAuthView: (v: "login" | "register") => void;
+  accounts: Account[];
+  onRegister: (acc: Account) => void;
+  onLogin: (acc: Account) => void;
+}) {
+  const [role, setRole] = useState<Role>("agent");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const isRegister = authView === "register";
+
+  function switchView(v: "login" | "register") {
+    setAuthView(v);
+    setName("");
+    setPassword("");
+    setError("");
+  }
+
+  function submit() {
+    const n = name.trim();
+    if (!n || !password) {
+      setError("请填写姓名和密码");
+      return;
+    }
+    if (isRegister) {
+      if (accounts.some(a => a.name === n)) {
+        setError("该姓名已注册，请直接登录或更换姓名");
+        return;
+      }
+      onRegister({ name: n, password, role });
+    } else {
+      const found = accounts.find(a => a.name === n);
+      if (!found || found.password !== password) {
+        setError("姓名或密码不正确");
+        return;
+      }
+      onLogin(found);
+    }
+  }
+
+  return (
+    <div className="grid min-h-0 flex-1 place-items-center bg-[#f7f8fa] p-6">
+      <div className="w-full max-w-[300px]">
+        <div className="mb-5 flex flex-col items-center">
+          <div className="mb-2 grid size-10 place-items-center rounded-lg bg-[#4d82f6] text-[18px] font-bold text-white">Q</div>
+          <div className="text-[14px] font-semibold text-[#2f3b48]">质检助手</div>
+          <div className="text-[10px] text-[#8b96a3]">{isRegister ? "创建账号" : "登录你的账号"}</div>
+        </div>
+
+        {isRegister && (
+          <div className="mb-3">
+            <div className="mb-1.5 text-[11px] text-[#5a6572]">选择角色</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setRole("agent")}
+                className={`flex flex-col items-center gap-1 rounded-md border px-2 py-2.5 text-[11px] transition ${role === "agent" ? "border-[#4b7ff0] bg-[#eaf2ff] font-medium text-[#3562c8]" : "border-[#dbe3ee] bg-white text-[#66727f] hover:bg-[#f6f9ff]"}`}
+              >
+                <UserRound className="size-4" />客服
+              </button>
+              <button
+                onClick={() => setRole("inspector")}
+                className={`flex flex-col items-center gap-1 rounded-md border px-2 py-2.5 text-[11px] transition ${role === "inspector" ? "border-[#4b7ff0] bg-[#eaf2ff] font-medium text-[#3562c8]" : "border-[#dbe3ee] bg-white text-[#66727f] hover:bg-[#f6f9ff]"}`}
+              >
+                <ClipboardCheck className="size-4" />质检人员
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="mb-3">
+          <div className="mb-1.5 text-[11px] text-[#5a6572]">姓名</div>
+          <input
+            value={name}
+            onChange={e => { setName(e.target.value); setError(""); }}
+            onKeyDown={e => { if (e.key === "Enter") submit(); }}
+            placeholder="请输入姓名"
+            className="h-9 w-full rounded-md border border-[#dbe3ee] bg-white px-3 text-[12px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"
+          />
+          {isRegister && <div className="mt-1 text-[10px] text-[#e59735]">请填写真实姓名，用于质检记录归属</div>}
+        </div>
+
+        <div className="mb-3">
+          <div className="mb-1.5 text-[11px] text-[#5a6572]">密码</div>
+          <input
+            type="password"
+            value={password}
+            onChange={e => { setPassword(e.target.value); setError(""); }}
+            onKeyDown={e => { if (e.key === "Enter") submit(); }}
+            placeholder="请输入密码"
+            className="h-9 w-full rounded-md border border-[#dbe3ee] bg-white px-3 text-[12px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"
+          />
+        </div>
+
+        {error && <div className="mb-3 rounded-md bg-[#fff0f0] px-3 py-2 text-[10px] text-[#d75d5d]">{error}</div>}
+
+        <button
+          onClick={submit}
+          className="mb-3 h-9 w-full rounded-md bg-[#4b7ff0] text-[12px] font-medium text-white transition hover:bg-[#3f72e0]"
+        >
+          {isRegister ? "注册并进入" : "登录"}
+        </button>
+
+        <div className="text-center text-[11px] text-[#8b97a3]">
+          {isRegister ? (
+            <>已有账号？<button onClick={() => switchView("login")} className="text-[#4b7ff0] hover:underline">去登录</button></>
+          ) : (
+            <>没有账号？<button onClick={() => switchView("register")} className="text-[#4b7ff0] hover:underline">去注册</button></>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -648,8 +784,24 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, tar
 export default function App() {
   const [view, setView] = useState<View>("quality");
   const [closed, setClosed] = useState(false);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [currentUser, setCurrentUser] = useState<Account | null>(null);
+  const [authView, setAuthView] = useState<"login" | "register">("login");
   const [targetRuleName, setTargetRuleName] = useState<string | null>(null);
   const [backToQuality, setBackToQuality] = useState(false);
+  const [openTaskName, setOpenTaskName] = useState<string | null>(null);
+
+  function enter(acc: Account) {
+    setCurrentUser(acc);
+    setView(acc.role === "inspector" ? "quality" : "records");
+  }
+  function logout() {
+    setCurrentUser(null);
+    setTargetRuleName(null);
+    setBackToQuality(false);
+    setOpenTaskName(null);
+    setAuthView("login");
+  }
   const initCommonCats: Cat[] = [
     {
       name: "服务态度",
@@ -704,12 +856,9 @@ export default function App() {
   return (
     <main className="grid h-dvh min-h-[640px] place-items-center overflow-hidden bg-[radial-gradient(circle_at_20%_10%,#eef5ff,transparent_34%),linear-gradient(135deg,#edf1f4,#e7ecef)] p-7 font-['Noto_Sans_SC'] text-[#4d5966]">
       <section className="flex h-full max-h-[720px] w-full max-w-[1040px] overflow-hidden rounded-xl border border-white/80 bg-white shadow-[0_24px_60px_rgba(41,53,66,.20)]">
-        <PluginSidebar view={view} setView={setView} />
+        {currentUser && <PluginSidebar view={view} setView={setView} currentUser={currentUser} onLogout={logout} />}
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex h-8 shrink-0 items-center justify-between border-b border-[#edf0f2] bg-[#fbfcfd] px-3">
-            <span className="text-[10px] text-[#9aa5b0]">
-              浏览器插件 · 客服质检助手
-            </span>
+          <div className="flex h-8 shrink-0 items-center justify-end border-b border-[#edf0f2] bg-[#fbfcfd] px-3">
             <button
               onClick={() => setClosed(true)}
               className="text-[#85919d] hover:text-[#3e4c5a]"
@@ -717,10 +866,15 @@ export default function App() {
               <X className="size-3.5" />
             </button>
           </div>
-          {view === "quality"
-            ? <QualityHome commonCats={commonCats} privateCats={privateCats} onGoToRule={(name) => { setTargetRuleName(name); setBackToQuality(true); setView("rules"); }}/>
-            : <RulesPage commonCats={commonCats} setCommonCats={setCommonCats} privateCats={privateCats} setPrivateCats={setPrivateCats} targetRuleName={targetRuleName} onTargetConsumed={() => setTargetRuleName(null)} onBack={backToQuality ? () => { setView("quality"); setBackToQuality(false); } : undefined}/>
-          }
+          {!currentUser ? (
+            <AuthScreen authView={authView} setAuthView={setAuthView} accounts={accounts} onRegister={acc => { setAccounts(prev => [...prev, acc]); enter(acc); }} onLogin={enter} />
+          ) : view === "records" ? (
+            <AgentRecords currentUser={currentUser} />
+          ) : view === "quality" ? (
+            <QualityHome commonCats={commonCats} privateCats={privateCats} openTaskName={openTaskName} setOpenTaskName={setOpenTaskName} onGoToRule={(name) => { setTargetRuleName(name); setBackToQuality(true); setView("rules"); }}/>
+          ) : (
+            <RulesPage commonCats={commonCats} setCommonCats={setCommonCats} privateCats={privateCats} setPrivateCats={setPrivateCats} targetRuleName={targetRuleName} onTargetConsumed={() => setTargetRuleName(null)} showBack={backToQuality} onBack={backToQuality ? () => { setView("quality"); setBackToQuality(false); } : undefined}/>
+          )}
         </div>
       </section>
     </main>
