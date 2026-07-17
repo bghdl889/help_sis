@@ -14,6 +14,84 @@ import {
 type Role = "agent" | "inspector";
 type Account = { name: string; password: string; role: Role };
 type View = "quality" | "rules" | "records";
+type ChatMsg = { from: "user" | "agent"; text: string; time: string };
+type AiIssue = { rule: string; score: string; quote: string };
+type Complaint = {
+  id: string;
+  agent: string;
+  user: string;
+  score: number;
+  chat: ChatMsg[];
+  aiIssues: AiIssue[];
+};
+type Review = {
+  agreed: boolean;
+  objections: { rule: string; reason: string }[];
+  suggestedScore: string;
+  detail: string;
+};
+
+const COMPLAINTS: Complaint[] = [
+  {
+    id: "c1",
+    agent: "李梦",
+    user: "用户01363539162",
+    score: 88,
+    chat: [
+      { from: "user", text: "这个活动的门槛到底是充值满多少？页面写得太绕了。", time: "10:02" },
+      { from: "agent", text: "您好，活动规则页面都写着呢，您再仔细看看。", time: "10:03" },
+      { from: "user", text: "我看了才来问的，就是没看明白……", time: "10:04" },
+      { from: "agent", text: "您已经问过了，规则页面都写着呢。", time: "10:05" },
+      { from: "user", text: "行吧。", time: "10:06" },
+    ],
+    aiIssues: [
+      { rule: "缺乏耐心", score: "-2", quote: "「您已经问过了，规则页面都写着呢。」" },
+    ],
+  },
+  {
+    id: "c2",
+    agent: "王浩",
+    user: "V2055A",
+    score: 72,
+    chat: [
+      { from: "user", text: "我参加的返利活动怎么没到账？", time: "14:20" },
+      { from: "agent", text: "这个我之前说过了，您再看看活动页面吧。", time: "14:21" },
+      { from: "user", text: "我等了两天了，很着急，能不能帮我查一下！", time: "14:22" },
+      { from: "agent", text: "好的好的，您稍等。", time: "14:23" },
+      { from: "user", text: "……你们到底管不管？", time: "14:30" },
+    ],
+    aiIssues: [
+      { rule: "缺乏耐心", score: "-2", quote: "「这个我之前说过了，您再看看活动页面吧。」" },
+      { rule: "安抚不到位", score: "-2", quote: "「好的好的，您稍等。」（玩家明显不满，未作安抚）" },
+    ],
+  },
+  {
+    id: "c3",
+    agent: "李梦",
+    user: "大有可为双鱼座",
+    score: 95,
+    chat: [
+      { from: "user", text: "请问新手礼包在哪里领？", time: "09:10" },
+      { from: "agent", text: "您好，进入游戏后点击右上角「福利」→「新手礼包」即可一键领取，已为您截图标注。", time: "09:11" },
+      { from: "user", text: "找到了，谢谢！", time: "09:12" },
+    ],
+    aiIssues: [],
+  },
+  {
+    id: "c4",
+    agent: "陈静",
+    user: "机械鲨富大傻俏",
+    score: 61,
+    chat: [
+      { from: "user", text: "我充值了但是钻石没到账，钱也扣了！", time: "20:41" },
+      { from: "agent", text: "这是系统问题，我这边无法处理。", time: "20:42" },
+      { from: "user", text: "那我找谁？钱不能白扣啊。", time: "20:43" },
+    ],
+    aiIssues: [
+      { rule: "安抚不到位", score: "-2", quote: "「这是系统问题，我这边无法处理。」（随即结束对话）" },
+    ],
+  },
+];
 
 function PluginSidebar({
   view,
@@ -90,11 +168,12 @@ function PluginSidebar({
   );
 }
 
-function QualityHome({ commonCats, privateCats, openTaskName, setOpenTaskName, onGoToRule }: { commonCats: Cat[]; privateCats: Cat[]; openTaskName: string | null; setOpenTaskName: (name: string | null) => void; onGoToRule: (name: string) => void }) {
+function QualityHome({ commonCats, privateCats, openTaskName, setOpenTaskName, openComplaintId, setOpenComplaintId, reviews, setReviews, onGoToRule }: { commonCats: Cat[]; privateCats: Cat[]; openTaskName: string | null; setOpenTaskName: (name: string | null) => void; openComplaintId: string | null; setOpenComplaintId: (id: string | null) => void; reviews: Record<string, Review>; setReviews: React.Dispatch<React.SetStateAction<Record<string, Review>>>; onGoToRule: (name: string) => void }) {
   type TaskRow = { name: string; status: string; note: string; date: string };
   const [tasks, setTasks] = useState<TaskRow[]>([
-    { name: "2024-10-10 客诉服务质检", status: "进行中", note: "十月第二周", date: "2024-10-10" },
-    { name: "2024-10-03 客诉服务质检", status: "已完成", note: "十月第一周", date: "2024-10-03" },
+    { name: "2024-10-11 客诉服务质检", status: "已完成", note: "十月第二周", date: "2024-10-11" },
+    { name: "2024-10-10 客诉服务质检", status: "异常", note: "AI 检查中断", date: "2024-10-10" },
+    { name: "2024-10-09 客诉服务质检", status: "已完成", note: "十月第二周", date: "2024-10-09" },
   ]);
   const detailTask = openTaskName ? tasks.find(t => t.name === openTaskName) ?? null : null;
   const setDetailTask = (task: TaskRow | null) => setOpenTaskName(task ? task.name : null);
@@ -127,12 +206,154 @@ function QualityHome({ commonCats, privateCats, openTaskName, setOpenTaskName, o
     return true;
   });
 
+  const openComplaint = openComplaintId ? COMPLAINTS.find(c => c.id === openComplaintId) ?? null : null;
+  if (detailTask && openComplaint) {
+    return (
+      <ConversationReview
+        complaint={openComplaint}
+        review={reviews[openComplaint.id] ?? null}
+        onBack={() => setOpenComplaintId(null)}
+        onSave={(r) => setReviews(prev => ({ ...prev, [openComplaint.id]: r }))}
+        onGoToRule={onGoToRule}
+      />
+    );
+  }
+
+  if (detailTask) {
+    const finalScore = (c: Complaint) => {
+      const r = reviews[c.id];
+      if (r && !r.agreed && r.suggestedScore.trim() !== "" && !Number.isNaN(Number(r.suggestedScore))) {
+        return Number(r.suggestedScore);
+      }
+      return c.score;
+    };
+    const allReviewed = COMPLAINTS.every(c => reviews[c.id]);
+    const summary = Array.from(new Set(COMPLAINTS.map(c => c.agent))).map(agent => {
+      const rows = COMPLAINTS.filter(c => c.agent === agent).map(finalScore);
+      const avg = Math.round((rows.reduce((a, b) => a + b, 0) / rows.length) * 10) / 10;
+      return { agent, count: rows.length, avg, min: Math.min(...rows) };
+    });
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#f7f8fa]">
+        <header className="flex h-[58px] items-center justify-between border-b border-[#e2e6eb] bg-white px-5">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setDetailTask(null)} className="flex items-center gap-1 rounded-md border border-[#d9e2ee] bg-white px-2.5 py-1.5 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
+              <ChevronRight className="size-3 rotate-180" />返回
+            </button>
+            <div>
+              <h1 className="text-[15px] font-semibold text-[#2f3b48]">{detailTask.name}</h1>
+              <p className="mt-0.5 text-[10px] text-[#8b96a3]">
+                {detailTask.status === "已完成" ? "AI 自动质检已完成，请逐条复审客诉；全部复审后展示客服得分汇总。" : "本次 AI 自动质检异常，请在列表中重启任务。"}
+              </p>
+            </div>
+          </div>
+          {detailTask.status === "已完成" && allReviewed && (
+            <button className="flex items-center gap-1 rounded border border-[#d9e2ee] bg-white px-2 py-1 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
+              <Download className="size-3" />导出 XLSX
+            </button>
+          )}
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-auto p-5">
+          <div className="overflow-hidden rounded-lg border border-[#dce6f4] bg-white">
+            {detailTask.status === "已完成" ? (
+              <div>
+                {/* 客服得分汇总 */}
+                <div className="border-b border-[#e9edf0] px-4 pb-3 pt-3">
+                  <div className="mb-2 text-[11px] font-semibold text-[#374350]">客服得分汇总</div>
+                  {allReviewed ? (
+                    <>
+                      <div className="grid grid-cols-[1fr_1fr_1fr_1fr] bg-[#f5f8fc] px-3 py-1.5 text-[10px] text-[#8b97a3]">
+                        <span>客服</span><span>客诉数</span><span>平均分</span><span>最低分</span>
+                      </div>
+                      {summary.map(row => (
+                        <div key={row.agent} className="grid grid-cols-[1fr_1fr_1fr_1fr] items-center border-t border-[#eef1f4] px-3 py-2.5 text-[11px]">
+                          <span className="font-medium text-[#3e4c5a]">{row.agent}</span>
+                          <span className="text-[#6b7a89]">{row.count} 条</span>
+                          <span className={`font-semibold ${row.avg >= 90 ? "text-[#27955d]" : row.avg >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{row.avg}</span>
+                          <span className={row.min >= 75 ? "text-[#6b7a89]" : "text-[#d75d5d]"}>{row.min}</span>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <div className="rounded-md bg-[#f7f9fb] px-3 py-3 text-[10px] leading-relaxed text-[#8b96a3]">
+                      需完成全部 {COMPLAINTS.length} 条客诉复审后，才会按最终确认得分计算并展示客服得分汇总。当前已复审 {COMPLAINTS.filter(c => reviews[c.id]).length}/{COMPLAINTS.length} 条。
+                    </div>
+                  )}
+                </div>
+
+                {/* 客诉评分细节 */}
+                <div className="px-4 pb-4 pt-3">
+                  <div className="mb-2 text-[11px] font-semibold text-[#374350]">客诉评分细节</div>
+                  <div className="overflow-x-auto">
+                    <div style={{ minWidth: "560px" }}>
+                      <div className="grid grid-cols-[70px_120px_64px_88px_72px] bg-[#f5f8fc] px-3 py-1.5 text-[10px] text-[#8b97a3]">
+                        <span>客服</span><span>用户名</span><span>评分结果</span><span>复审会话</span><span>审核状态</span>
+                      </div>
+                      <div className="max-h-[420px] overflow-y-auto">
+                        {COMPLAINTS.map((row) => {
+                          const reviewed = !!reviews[row.id];
+                          const shown = finalScore(row);
+                          const changed = shown !== row.score;
+                          return (
+                            <div key={row.id} className="grid grid-cols-[70px_120px_64px_88px_72px] items-center border-t border-[#eef1f4] px-3 py-2.5 text-[10px]">
+                              <span className="font-medium text-[#465260]">{row.agent}</span>
+                              <span className="truncate text-[#6b7a89]" title={row.user}>{row.user}</span>
+                              <span className="flex items-baseline gap-1">
+                                <span className={`font-semibold ${shown >= 90 ? "text-[#27955d]" : shown >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{shown}分</span>
+                                {changed && <span className="text-[9px] text-[#98a3af] line-through">{row.score}</span>}
+                              </span>
+                              <div>
+                                <button onClick={() => setOpenComplaintId(row.id)} className="inline-flex items-center gap-0.5 rounded border border-[#dbe3ee] px-1.5 py-0.5 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
+                                  <SlidersHorizontal className="size-2.5" />查看链接
+                                </button>
+                              </div>
+                              <div>
+                                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${reviewed ? "bg-[#e6f4ee] text-[#27955d]" : "bg-[#f0f2f5] text-[#98a3af]"}`}>
+                                  <span className={`size-1.5 rounded-full ${reviewed ? "bg-[#34a36a]" : "bg-[#c0c8d0]"}`} />
+                                  {reviewed ? "已审" : "未审"}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="px-4 py-5">
+                <div className="mb-3 grid grid-cols-2 gap-3">
+                  <div className="rounded-md bg-[#f7f9fb] px-3 py-2.5">
+                    <div className="text-[10px] text-[#8b97a3]">任务状态</div>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-[#d75d5d]" />
+                      <span className="text-[11px] font-medium text-[#d75d5d]">AI 质检异常</span>
+                    </div>
+                  </div>
+                  <div className="rounded-md bg-[#f7f9fb] px-3 py-2.5">
+                    <div className="text-[10px] text-[#8b97a3]">质检日期</div>
+                    <div className="mt-1 text-[11px] font-medium text-[#465260]">{detailTask.date}</div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between rounded-md border border-[#e8edf2] bg-[#fafbfc] px-3 py-2.5 text-[10px] text-[#8b97a3]">
+                  <span>本次自动质检未能完成，请返回列表点击「重启任务」重新运行。</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#f7f8fa]">
       <header className="flex h-[58px] items-center justify-between border-b border-[#e2e6eb] bg-white px-5">
         <div>
-          <h1 className="text-[15px] font-semibold text-[#2f3b48]">客服质检</h1>
-          <p className="mt-0.5 text-[10px] text-[#8b96a3]">按时间区间筛选质检任务，复核结果并导出</p>
+          <h1 className="text-[15px] font-semibold text-[#2f3b48]">任务管理</h1>
+          <p className="mt-0.5 text-[10px] text-[#8b96a3]">AI 于非工作时间自动质检，工作时间查看每日质检结果</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-[#8b97a3]">时间区间</span>
@@ -164,8 +385,8 @@ function QualityHome({ commonCats, privateCats, openTaskName, setOpenTaskName, o
           <div className="space-y-3">
             <div className="overflow-hidden rounded-lg border border-[#e1e6eb] bg-white">
               <div className="border-b border-[#e9edf0] px-4 py-3">
-                <div className="text-[12px] font-semibold text-[#374350]">质检任务列表</div>
-                <div className="mt-0.5 text-[10px] text-[#8b97a3]">进行中可取消；已完成可复核结果并导出</div>
+                <div className="text-[12px] font-semibold text-[#374350]">自动质检任务列表</div>
+                <div className="mt-0.5 text-[10px] text-[#8b97a3]">每日 AI 自动质检生成；已完成可复核结果，异常可重启任务</div>
               </div>
               {filteredTasks.length === 0 ? (
                 <div className="px-4 py-8 text-center text-[11px] text-[#b0bbc8]">{(dateFrom || dateTo) ? "所选时间区间内暂无质检任务" : "暂无质检任务"}</div>
@@ -173,7 +394,7 @@ function QualityHome({ commonCats, privateCats, openTaskName, setOpenTaskName, o
                 <div className="overflow-x-auto">
                   <div style={{ minWidth: "500px" }}>
                     <div className="grid grid-cols-[1.8fr_.7fr_1fr_.8fr_auto] bg-[#fafbfc] px-4 py-2 text-[10px] text-[#8b97a3]">
-                      <span>任务名称</span><span>状态</span><span>备注</span><span>日期</span><span className="text-right">操作</span>
+                      <span>任务名称</span><span>状态</span><span>备注</span><span>日期</span><span>操作</span>
                     </div>
                     <div className="max-h-[228px] overflow-y-auto">
                       {filteredTasks.map(task => {
@@ -190,8 +411,8 @@ function QualityHome({ commonCats, privateCats, openTaskName, setOpenTaskName, o
                               <span className="cursor-text font-medium text-[#465260] hover:text-[#4b7ff0]" onClick={() => startEdit(task, "name")} title="点击编辑">{task.name}</span>
                             )}
                             <span>
-                              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${task.status === "已完成" ? "bg-[#e6f4ee] text-[#27955d]" : "bg-[#fff8ec] text-[#c97d25]"}`}>
-                                <span className={`size-1.5 rounded-full ${task.status === "已完成" ? "bg-[#34a36a]" : "bg-[#e59735]"}`} />
+                              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${task.status === "已完成" ? "bg-[#e6f4ee] text-[#27955d]" : "bg-[#fdeceb] text-[#d75d5d]"}`}>
+                                <span className={`size-1.5 rounded-full ${task.status === "已完成" ? "bg-[#34a36a]" : "bg-[#d75d5d]"}`} />
                                 {task.status}
                               </span>
                             </span>
@@ -205,15 +426,15 @@ function QualityHome({ commonCats, privateCats, openTaskName, setOpenTaskName, o
                               </span>
                             )}
                             <span className="text-[#758291]">{task.date}</span>
-                            <div className="flex items-center justify-end gap-1.5">
+                            <div className="flex items-center justify-start gap-1.5">
                               {task.status === "已完成" ? (
-                                <button onClick={() => setDetailTask(isActive ? null : task)}
-                                  className={`rounded border px-2 py-1 text-[10px] transition ${isActive ? "border-[#4b7ff0] bg-[#4b7ff0] text-white" : "border-[#d9e2ee] bg-white text-[#4b7ff0] hover:bg-[#eef5ff]"}`}>
+                                <button onClick={() => setDetailTask(task)}
+                                  className="rounded border border-[#d9e2ee] bg-white px-2 py-1 text-[10px] text-[#4b7ff0] transition hover:bg-[#eef5ff]">
                                   复核结果
                                 </button>
                               ) : (
-                                <button onClick={() => { setTasks(prev => prev.filter(t => t.name !== task.name)); if (isActive) setDetailTask(null); }} className="rounded border border-[#f0c4c4] bg-white px-2 py-1 text-[10px] text-[#d75d5d] hover:bg-[#fff0f0]">
-                                  取消任务
+                                <button onClick={() => { setTasks(prev => prev.map(t => t.name === task.name ? { ...t, status: "已完成" } : t)); }} className="rounded border border-[#d9e2ee] bg-white px-2 py-1 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
+                                  重启任务
                                 </button>
                               )}
                             </div>
@@ -225,113 +446,237 @@ function QualityHome({ commonCats, privateCats, openTaskName, setOpenTaskName, o
                 </div>
               )}
             </div>
-            {detailTask && (
-              <div className="overflow-hidden rounded-lg border border-[#dce6f4] bg-white">
-                {/* 详情面板头部 */}
-                <div className="flex items-center justify-between border-b border-[#e9edf0] bg-[#fbfdff] px-4 py-3">
-                  <div>
-                    <div className="text-[12px] font-semibold text-[#374350]">{detailTask.name}</div>
-                    <div className="mt-0.5 text-[10px] text-[#8b97a3]">
-                      {detailTask.status === "已完成" ? "任务已完成，以下为各工单质检结果与客服得分汇总。" : "任务质检进行中，完成后将自动生成评分结果。"}
+          </div>
+        </div>
+    </div>
+  );
+}
+
+function ConversationReview({ complaint, review, onBack, onSave, onGoToRule }: { complaint: Complaint; review: Review | null; onBack: () => void; onSave: (r: Review) => void; onGoToRule: (name: string) => void }) {
+  const involvedRules = Array.from(new Set(complaint.aiIssues.map(i => i.rule)));
+  const [editing, setEditing] = useState(false);
+  const [selectedRules, setSelectedRules] = useState<string[]>(review && !review.agreed ? review.objections.map(o => o.rule) : []);
+  const [ruleReasons, setRuleReasons] = useState<Record<string, string>>(() => {
+    const m: Record<string, string> = {};
+    if (review && !review.agreed) review.objections.forEach(o => { m[o.rule] = o.reason; });
+    return m;
+  });
+  const [score, setScore] = useState(review?.suggestedScore ?? "");
+  const [detail, setDetail] = useState(review?.detail ?? "");
+  const [err, setErr] = useState("");
+
+  function toggleRule(r: string) {
+    setSelectedRules(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]);
+    if (err) setErr("");
+  }
+  function agreeNoIssue() {
+    onSave({ agreed: true, objections: [], suggestedScore: "", detail: "" });
+    setEditing(false);
+  }
+  function startObjection() {
+    setEditing(true);
+    setErr("");
+    if (review && !review.agreed) {
+      setSelectedRules(review.objections.map(o => o.rule));
+      const m: Record<string, string> = {};
+      review.objections.forEach(o => { m[o.rule] = o.reason; });
+      setRuleReasons(m);
+      setScore(review.suggestedScore);
+      setDetail(review.detail);
+    } else {
+      setSelectedRules([]); setRuleReasons({}); setScore(""); setDetail("");
+    }
+  }
+  function saveObjection() {
+    if (selectedRules.length === 0) { setErr("请至少选择一个有异议的评分规则"); return; }
+    if (selectedRules.some(r => !(ruleReasons[r] ?? "").trim())) { setErr("请分别说明每个所选规则扣分不合理的原因"); return; }
+    if (!score.trim()) { setErr("请填写该客服应有的总分"); return; }
+    if (!detail.trim()) { setErr("请填写意见细节"); return; }
+    onSave({
+      agreed: false,
+      objections: selectedRules.map(r => ({ rule: r, reason: ruleReasons[r].trim() })),
+      suggestedScore: score.trim(),
+      detail: detail.trim(),
+    });
+    setEditing(false);
+    setErr("");
+  }
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#f7f8fa]">
+      <header className="flex h-[58px] items-center gap-3 border-b border-[#e2e6eb] bg-white px-5">
+        <button onClick={onBack} className="flex items-center gap-1 rounded-md border border-[#d9e2ee] bg-white px-2.5 py-1.5 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
+          <ChevronRight className="size-3 rotate-180" />返回
+        </button>
+        <div>
+          <h1 className="text-[15px] font-semibold text-[#2f3b48]">复审会话 · {complaint.agent}</h1>
+          <p className="mt-0.5 text-[10px] text-[#8b96a3]">用户 {complaint.user} · AI 评分 {complaint.score} 分</p>
+        </div>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-auto p-5">
+        <div className="mx-auto max-w-[560px] space-y-4">
+          {/* 对话气泡 */}
+          <div className="rounded-lg border border-[#dce6f4] bg-white p-4">
+            <div className="mb-3 text-[11px] font-semibold text-[#374350]">客服与用户对话</div>
+            <div className="space-y-2.5">
+              {complaint.chat.map((m, i) => (
+                <div key={i} className={`flex ${m.from === "agent" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[75%] ${m.from === "agent" ? "items-end" : "items-start"} flex flex-col gap-0.5`}>
+                    <span className="px-1 text-[9px] text-[#a8b2be]">{m.from === "agent" ? "客服" : "用户"} · {m.time}</span>
+                    <div className={`rounded-2xl px-3 py-2 text-[11px] leading-relaxed ${m.from === "agent" ? "rounded-br-sm bg-[#4b7ff0] text-white" : "rounded-bl-sm bg-[#eef1f5] text-[#3e4c5a]"}`}>
+                      {m.text}
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {detailTask.status === "已完成" && (
-                      <button className="flex items-center gap-1 rounded border border-[#d9e2ee] bg-white px-2 py-1 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
-                        <Download className="size-3" />导出 XLSX
-                      </button>
-                    )}
-                    <button onClick={() => setDetailTask(null)} className="rounded border border-[#dde4ec] bg-white px-2 py-1 text-[10px] text-[#718090] hover:bg-[#f5f7f9]">收起</button>
                   </div>
                 </div>
+              ))}
+            </div>
+          </div>
 
-                {detailTask.status === "已完成" ? (
-                  <div>
-                    {/* 客诉明细 */}
-                    <div className="border-b border-[#e9edf0] px-4 pb-3 pt-3">
-                      <div className="mb-2 text-[11px] font-semibold text-[#374350]">客诉明细</div>
-                      <div className="overflow-x-auto">
-                        <div style={{ minWidth: "620px" }}>
-                          <div className="grid grid-cols-[70px_110px_64px_1fr_72px] bg-[#f5f8fc] px-3 py-1.5 text-[10px] text-[#8b97a3]">
-                            <span>客服</span><span>用户名</span><span>评分结果</span><span>扣分明细</span><span>客诉链接</span>
-                          </div>
-                          <div className="max-h-[384px] overflow-y-auto">
-                            {[
-                              { agent: "李梦", user: "用户01363539162", issues: [{ rule: "缺乏耐心", quote: "「您已经问过了，规则页面都写着呢。」" }], score: 88, link: "#" },
-                              { agent: "王浩", user: "V2055A", issues: [{ rule: "缺乏耐心", quote: "「这个我之前说过了，您再看看活动页面吧。」" }, { rule: "安抚不到位", quote: "「好的好的，您稍等。」（玩家明显不满，未作安抚）" }], score: 72, link: "#" },
-                              { agent: "李梦", user: "大有可为双鱼座", issues: [], score: 95, link: "#" },
-                              { agent: "陈静", user: "机械鲨富大傻俏", issues: [{ rule: "安抚不到位", quote: "「这是系统问题，我这边无法处理。」（随即结束对话）" }], score: 61, link: "#" },
-                            ].map((row, ri) => (
-                              <div key={ri} className="grid grid-cols-[70px_110px_64px_1fr_72px] border-t border-[#eef1f4] px-3 py-2.5 text-[10px]">
-                                <span className="pt-0.5 font-medium text-[#465260]">{row.agent}</span>
-                                <span className="pt-0.5 text-[#6b7a89]">{row.user}</span>
-                                <span className={`pt-0.5 font-semibold ${row.score >= 90 ? "text-[#27955d]" : row.score >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{row.score}分</span>
-                                <div className="space-y-1.5">
-                                  {row.issues.length === 0 ? (
-                                    <span className="text-[#27955d]">无扣分项</span>
-                                  ) : row.issues.map((issue, ii) => (
-                                    <div key={ii} className="space-y-0.5">
-                                      <button onClick={() => onGoToRule(issue.rule)} className="rounded bg-[#fff0f0] px-1.5 py-0.5 text-[10px] text-[#d75d5d] hover:bg-[#ffd9d9] hover:underline">{issue.rule}</button>
-                                      <div className="text-[10px] italic text-[#8797a5]">{issue.quote}</div>
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="pt-0.5">
-                                  <a href={row.link} className="inline-flex items-center gap-0.5 rounded border border-[#dbe3ee] px-1.5 py-0.5 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
-                                    <SlidersHorizontal className="size-2.5" />查看
-                                  </a>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
+          {/* AI 评分明细 */}
+          <div className="rounded-lg border border-[#dce6f4] bg-white p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-[11px] font-semibold text-[#374350]">AI 评分明细</div>
+              <span className={`text-[12px] font-semibold ${complaint.score >= 90 ? "text-[#27955d]" : complaint.score >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{complaint.score} 分</span>
+            </div>
+            {complaint.aiIssues.length === 0 ? (
+              <div className="rounded-md bg-[#f2faf5] px-3 py-2 text-[10px] text-[#27955d]">本次会话无扣分项，AI 判定表现良好。</div>
+            ) : (
+              <div className="space-y-2">
+                {complaint.aiIssues.map((iss, i) => (
+                  <div key={i} className="rounded-md border border-[#f2e2e2] bg-[#fdf6f6] px-3 py-2">
+                    <div className="mb-1 flex items-center gap-2">
+                      <button onClick={() => onGoToRule(iss.rule)} className="rounded bg-[#fff0f0] px-1.5 py-0.5 text-[10px] text-[#d75d5d] hover:bg-[#ffd9d9] hover:underline">{iss.rule}</button>
+                      <span className="text-[10px] font-medium text-[#d75d5d]">{iss.score}</span>
                     </div>
-
-                    {/* 客服得分汇总 */}
-                    <div className="px-4 pb-4 pt-3">
-                      <div className="mb-2 text-[11px] font-semibold text-[#374350]">客服得分汇总</div>
-                      <div className="grid grid-cols-[1fr_1fr_1fr_1fr] bg-[#f5f8fc] px-3 py-1.5 text-[10px] text-[#8b97a3]">
-                        <span>客服</span><span>客诉数</span><span>平均分</span><span>最低分</span>
-                      </div>
-                      {[
-                        { agent: "李梦", count: 2, avg: 91.5, min: 88 },
-                        { agent: "王浩", count: 1, avg: 72, min: 72 },
-                        { agent: "陈静", count: 1, avg: 61, min: 61 },
-                      ].map(row => (
-                        <div key={row.agent} className="grid grid-cols-[1fr_1fr_1fr_1fr] items-center border-t border-[#eef1f4] px-3 py-2.5 text-[11px]">
-                          <span className="font-medium text-[#3e4c5a]">{row.agent}</span>
-                          <span className="text-[#6b7a89]">{row.count} 条</span>
-                          <span className={`font-semibold ${row.avg >= 90 ? "text-[#27955d]" : row.avg >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{row.avg}</span>
-                          <span className={row.min >= 75 ? "text-[#6b7a89]" : "text-[#d75d5d]"}>{row.min}</span>
-                        </div>
-                      ))}
-                    </div>
+                    <div className="text-[10px] italic text-[#8797a5]">{iss.quote}</div>
                   </div>
+                ))}
+              </div>
+            )}
+
+            {/* 复审结论 / 决策按钮 */}
+            {!editing && (
+              <div className="mt-3 flex items-center justify-end gap-2 border-t border-[#eef1f4] pt-3">
+                {review ? (
+                  review.agreed ? (
+                    <>
+                      <span className="mr-auto flex items-center gap-1 text-[10px] text-[#27955d]"><span className="size-1.5 rounded-full bg-[#34a36a]" />已确认 AI 评分无异议</span>
+                      <button onClick={startObjection} className="rounded-md border border-[#d9e2ee] bg-white px-3 py-1.5 text-[10px] text-[#6b7a89] hover:bg-[#f2f5f9]">改为有异议</button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="mr-auto flex items-center gap-1 text-[10px] text-[#e59735]"><span className="size-1.5 rounded-full bg-[#e59735]" />已提交异议意见</span>
+                      <button onClick={startObjection} className="rounded-md border border-[#d9e2ee] bg-white px-3 py-1.5 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">修改意见</button>
+                    </>
+                  )
                 ) : (
-                  <div className="px-4 py-5">
-                    <div className="mb-3 grid grid-cols-2 gap-3">
-                      <div className="rounded-md bg-[#f7f9fb] px-3 py-2.5">
-                        <div className="text-[10px] text-[#8b97a3]">任务状态</div>
-                        <div className="mt-1 flex items-center gap-1.5">
-                          <span className="size-2 rounded-full bg-[#e59735]" />
-                          <span className="text-[11px] font-medium text-[#c97d25]">质检进行中</span>
-                        </div>
-                      </div>
-                      <div className="rounded-md bg-[#f7f9fb] px-3 py-2.5">
-                        <div className="text-[10px] text-[#8b97a3]">创建日期</div>
-                        <div className="mt-1 text-[11px] font-medium text-[#465260]">{detailTask.date}</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between rounded-md border border-[#e8edf2] bg-[#fafbfc] px-3 py-2.5 text-[10px] text-[#8b97a3]">
-                      <span>质检结果将在全部工单处理完成后生成，届时可在此处复核并导出。</span>
-                    </div>
-                  </div>
+                  <>
+                    <span className="mr-auto text-[10px] text-[#8b96a3]">对以上 AI 评分是否认可？</span>
+                    <button onClick={agreeNoIssue} className="rounded-md bg-[#27955d] px-3 py-1.5 text-[10px] font-medium text-white hover:bg-[#22824f]">没问题</button>
+                    <button onClick={startObjection} className="rounded-md border border-[#e2b3b3] bg-white px-3 py-1.5 text-[10px] font-medium text-[#d75d5d] hover:bg-[#fdf1f1]">有异议</button>
+                  </>
                 )}
               </div>
             )}
           </div>
+
+          {/* 已保存的异议详情（只读） */}
+          {!editing && review && !review.agreed && (
+            <div className="rounded-lg border border-[#dce6f4] bg-white p-4">
+              <div className="mb-2 text-[11px] font-semibold text-[#374350]">修改意见</div>
+              <div className="space-y-2">
+                {review.objections.map(o => (
+                  <div key={o.rule} className="rounded-md bg-[#f7f9fb] px-3 py-2">
+                    <button onClick={() => onGoToRule(o.rule)} className="mb-1 rounded bg-[#eef4ff] px-1.5 py-0.5 text-[10px] text-[#4b7ff0] hover:bg-[#dbe8ff] hover:underline">{o.rule}</button>
+                    <div className="text-[11px] leading-relaxed text-[#4d5966]">{o.reason}</div>
+                  </div>
+                ))}
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-[10px] text-[#8b97a3]">建议总分</span>
+                  <span className="text-[12px] font-semibold text-[#4b7ff0]">{review.suggestedScore} 分</span>
+                </div>
+                <div>
+                  <div className="mb-1 text-[10px] text-[#8b97a3]">意见细节</div>
+                  <div className="rounded-md bg-[#f7f9fb] px-3 py-2 text-[11px] leading-relaxed text-[#4d5966]">{review.detail}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 异议编辑表单 */}
+          {editing && (
+            <div className="rounded-lg border border-[#dce6f4] bg-white p-4">
+              <div className="mb-2 text-[11px] font-semibold text-[#374350]">对 AI 评分的修改意见</div>
+              {involvedRules.length === 0 ? (
+                <p className="text-[10px] text-[#8b96a3]">本次会话 AI 未涉及任何扣分规则，无可提出异议的评分项。</p>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-[10px] text-[#8b97a3]">选择有异议的评分规则（可多选）</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {involvedRules.map(r => {
+                        const on = selectedRules.includes(r);
+                        return (
+                          <button key={r} onClick={() => toggleRule(r)} className={`rounded-full px-2.5 py-1 text-[10px] transition ${on ? "bg-[#4b7ff0] font-medium text-white" : "bg-[#eef1f5] text-[#6b7a89] hover:bg-[#e2e8f0]"}`}>{on ? "✓ " : ""}{r}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {selectedRules.map(r => (
+                    <div key={r}>
+                      <div className="mb-1 flex items-center gap-2">
+                        <label className="text-[10px] text-[#8b97a3]">「{r}」扣分不合理的原因</label>
+                        <button onClick={() => onGoToRule(r)} className="text-[10px] text-[#4b7ff0] hover:underline">查看规则明细 →</button>
+                      </div>
+                      <textarea
+                        value={ruleReasons[r] ?? ""}
+                        onChange={e => { setRuleReasons(prev => ({ ...prev, [r]: e.target.value })); if (err) setErr(""); }}
+                        rows={2}
+                        placeholder={`说明「${r}」这一项 AI 扣分为何不合理…`}
+                        className="w-full resize-none rounded-md border border-[#dbe3ee] bg-white px-3 py-2 text-[11px] leading-relaxed text-[#3e4c5a] outline-none focus:border-[#4b7ff0]"
+                      />
+                    </div>
+                  ))}
+
+                  <div>
+                    <label className="mb-1 block text-[10px] text-[#8b97a3]">该客服应有的总分</label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number" min={0} max={100}
+                        value={score}
+                        onChange={e => { setScore(e.target.value); if (err) setErr(""); }}
+                        placeholder="0 - 100"
+                        className="h-8 w-24 rounded-md border border-[#dbe3ee] bg-white px-2 text-[11px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0]"
+                      />
+                      <span className="text-[10px] text-[#8b97a3]">分</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[10px] text-[#8b97a3]">意见细节</label>
+                    <textarea
+                      value={detail}
+                      onChange={e => { setDetail(e.target.value); if (err) setErr(""); }}
+                      rows={3}
+                      placeholder="补充说明本次复审的整体意见…"
+                      className="w-full resize-none rounded-md border border-[#dbe3ee] bg-white px-3 py-2 text-[11px] leading-relaxed text-[#3e4c5a] outline-none focus:border-[#4b7ff0]"
+                    />
+                  </div>
+
+                  {err && <div className="text-[10px] text-[#d75d5d]">{err}</div>}
+
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => { setEditing(false); setErr(""); }} className="rounded-md border border-[#d9e2ee] bg-white px-3 py-1.5 text-[10px] text-[#6b7a89] hover:bg-[#f2f5f9]">取消</button>
+                    <button onClick={saveObjection} className="rounded-md bg-[#4b7ff0] px-3 py-1.5 text-[10px] font-medium text-white hover:bg-[#3d6fe0]">提交修改意见</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+      </div>
     </div>
   );
 }
@@ -377,6 +722,7 @@ function RulesList({
   const [menuOpenIdx, setMenuOpenIdx] = useState<number | null>(null);
   const [catNameDraft, setCatNameDraft] = useState("");
   const [editingKey, setEditingKey] = useState<{ cat: number; dim: number } | null>(null);
+  const [viewingKey, setViewingKey] = useState<{ cat: number; dim: number } | null>(null);
   const [dimDrafts, setDimDrafts] = useState<Record<string, Dim>>({});
   const [addingDim, setAddingDim] = useState<number | null>(null);
   const emptyDraft: NewDimDraft = { title: "", score: "", standard: "", criteria: "" };
@@ -389,10 +735,9 @@ function RulesList({
       for (let di = 0; di < cats[ci].dimensions.length; di++) {
         if (cats[ci].dimensions[di].title === targetRuleName) {
           const key = `${ci}-${di}`;
-          const dim = cats[ci].dimensions[di];
           setCats(prev => prev.map((c, i) => i === ci ? { ...c, expanded: true } : c));
-          setDimDrafts(prev => ({ ...prev, [key]: { title: dim.title, score: dim.score, standard: dim.standard, criteria: dim.criteria } }));
-          setEditingKey({ cat: ci, dim: di });
+          setEditingKey(null);
+          setViewingKey({ cat: ci, dim: di });
           setAddingDim(null);
           onTargetConsumed?.();
           setTimeout(() => dimRowRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
@@ -508,8 +853,9 @@ function RulesList({
                 const key = `${catIdx}-${dimIdx}`;
                 const draft = dimDrafts[key];
                 const isEditing = editingKey?.cat === catIdx && editingKey?.dim === dimIdx;
+                const isViewing = viewingKey?.cat === catIdx && viewingKey?.dim === dimIdx;
                 return (
-                  <div key={dimIdx} ref={el => { dimRowRefs.current[`${catIdx}-${dimIdx}`] = el; }} className={`border-b border-[#f2f4f7] px-5 transition ${isEditing && targetRuleName === dim.title ? "bg-[#eef5ff] ring-1 ring-inset ring-[#4b7ff0]" : ""}`}>
+                  <div key={dimIdx} ref={el => { dimRowRefs.current[`${catIdx}-${dimIdx}`] = el; }} className={`border-b border-[#f2f4f7] px-5 transition ${isViewing ? "bg-[#eef5ff] ring-1 ring-inset ring-[#4b7ff0]" : ""}`}>
                     {/* 维度行 */}
                     <div className="grid grid-cols-[1.6fr_2.4fr_.5fr_.55fr] items-center gap-3 py-2.5 text-[11px]">
                       <div className="font-medium text-[#465260]">{dim.title}</div>
@@ -521,14 +867,34 @@ function RulesList({
                             if (isEditing) { setEditingKey(null); } else {
                               setDimDrafts(prev => ({ ...prev, [key]: { title: dim.title, score: dim.score, standard: dim.standard, criteria: dim.criteria } }));
                               setEditingKey({ cat: catIdx, dim: dimIdx });
+                              setViewingKey(null);
                               setAddingDim(null);
                             }
                           }}
                           className={`text-[10px] ${isEditing ? "text-[#4b7ff0]" : "text-[#778695] hover:text-[#4b7ff0]"}`}
-                        >{isEditing ? "收起" : "配置"}</button>
+                        >{isEditing ? "收起" : "修改"}</button>
                         <button onClick={() => deleteDim(catIdx, dimIdx)} className="text-[10px] text-[#b0bbc8] hover:text-[#d75d5d]">删除</button>
                       </div>
                     </div>
+                    {/* 只读明细（从复审跳转进入） */}
+                    {isViewing && !isEditing && (
+                      <div className="mb-3 rounded-md border border-[#dfe7f4] bg-[#f8fbff] p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-[11px] font-medium text-[#496078]">规则明细（只读）</span>
+                          <button onClick={() => setViewingKey(null)} className="text-[10px] text-[#8b97a3] hover:text-[#4b7ff0]">收起</button>
+                        </div>
+                        <div className="grid grid-cols-[70px_1fr] gap-x-3 gap-y-2 text-[10px]">
+                          <span className="text-[#8794a0]">维度名称</span>
+                          <span className="text-[#465260]">{dim.title}</span>
+                          <span className="text-[#8794a0]">分值</span>
+                          <span className="text-[#d75d5d]">{dim.score} 分</span>
+                          <span className="text-[#8794a0]">说明</span>
+                          <span className="leading-relaxed text-[#4d5966]">{dim.standard || "—"}</span>
+                          <span className="text-[#8794a0]">判断标准</span>
+                          <span className="leading-relaxed text-[#4d5966]">{dim.criteria || "—"}</span>
+                        </div>
+                      </div>
+                    )}
                     {/* 配置面板 */}
                     {isEditing && draft && (
                       <div className="mb-3 rounded-md border border-[#dfe7f4] bg-[#f8fbff] p-3">
@@ -648,11 +1014,12 @@ function AgentRecords({ currentUser }: { currentUser: Account }) {
         </div>
       </header>
       <div className="grid min-h-0 flex-1 place-items-center p-5">
-        <div className="text-center">
-          <div className="mx-auto mb-3 grid size-12 place-items-center rounded-full bg-[#eef2f7] text-[#b0bbc8]">
+        <div className="max-w-[280px] text-center">
+          <div className="mx-auto mb-3 grid size-12 place-items-center rounded-full bg-[#fdf3e6] text-[#e59735]">
             <UserRound className="size-6" />
           </div>
-          <div className="text-[12px] text-[#8b97a3]">暂无记录</div>
+          <div className="text-[13px] font-semibold text-[#e59735]">该功能暂不开放中</div>
+          <div className="mt-1.5 text-[10px] leading-relaxed text-[#8b97a3]">个人记录功能正在建设中，敬请期待。后续将展示您的质检得分与被质检明细。</div>
         </div>
       </div>
     </div>
@@ -790,6 +1157,8 @@ export default function App() {
   const [targetRuleName, setTargetRuleName] = useState<string | null>(null);
   const [backToQuality, setBackToQuality] = useState(false);
   const [openTaskName, setOpenTaskName] = useState<string | null>(null);
+  const [openComplaintId, setOpenComplaintId] = useState<string | null>(null);
+  const [reviews, setReviews] = useState<Record<string, Review>>({});
 
   function enter(acc: Account) {
     setCurrentUser(acc);
@@ -800,6 +1169,8 @@ export default function App() {
     setTargetRuleName(null);
     setBackToQuality(false);
     setOpenTaskName(null);
+    setOpenComplaintId(null);
+    setReviews({});
     setAuthView("login");
   }
   const initCommonCats: Cat[] = [
@@ -856,7 +1227,7 @@ export default function App() {
   return (
     <main className="grid h-dvh min-h-[640px] place-items-center overflow-hidden bg-[radial-gradient(circle_at_20%_10%,#eef5ff,transparent_34%),linear-gradient(135deg,#edf1f4,#e7ecef)] p-7 font-['Noto_Sans_SC'] text-[#4d5966]">
       <section className="flex h-full max-h-[720px] w-full max-w-[1040px] overflow-hidden rounded-xl border border-white/80 bg-white shadow-[0_24px_60px_rgba(41,53,66,.20)]">
-        {currentUser && <PluginSidebar view={view} setView={setView} currentUser={currentUser} onLogout={logout} />}
+        {currentUser && <PluginSidebar view={view} setView={(v) => { setBackToQuality(false); setView(v); }} currentUser={currentUser} onLogout={logout} />}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-8 shrink-0 items-center justify-end border-b border-[#edf0f2] bg-[#fbfcfd] px-3">
             <button
@@ -871,7 +1242,7 @@ export default function App() {
           ) : view === "records" ? (
             <AgentRecords currentUser={currentUser} />
           ) : view === "quality" ? (
-            <QualityHome commonCats={commonCats} privateCats={privateCats} openTaskName={openTaskName} setOpenTaskName={setOpenTaskName} onGoToRule={(name) => { setTargetRuleName(name); setBackToQuality(true); setView("rules"); }}/>
+            <QualityHome commonCats={commonCats} privateCats={privateCats} openTaskName={openTaskName} setOpenTaskName={setOpenTaskName} openComplaintId={openComplaintId} setOpenComplaintId={setOpenComplaintId} reviews={reviews} setReviews={setReviews} onGoToRule={(name) => { setTargetRuleName(name); setBackToQuality(true); setView("rules"); }}/>
           ) : (
             <RulesPage commonCats={commonCats} setCommonCats={setCommonCats} privateCats={privateCats} setPrivateCats={setPrivateCats} targetRuleName={targetRuleName} onTargetConsumed={() => setTargetRuleName(null)} showBack={backToQuality} onBack={backToQuality ? () => { setView("quality"); setBackToQuality(false); } : undefined}/>
           )}
