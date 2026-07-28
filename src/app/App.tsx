@@ -11,6 +11,16 @@ import {
   ChevronRight,
   RefreshCw,
   Trash2,
+  History,
+  Check,
+  Clock,
+  RotateCcw,
+  Bot,
+  Sparkles,
+  ThumbsUp,
+  MessageSquareText,
+  AlertCircle,
+  Pencil,
 } from "lucide-react";
 
 type Role = "agent" | "inspector" | "manager" | "admin";
@@ -36,6 +46,7 @@ type Review = {
   suggestedScore: string;
   detail: string;
   agentNote: string;
+  deductedRules: string[];
 };
 type Principle = { title: string; content: string };
 
@@ -277,13 +288,13 @@ function PluginSidebar({
   );
 }
 
-function QualityHome({ commonCats, privateCats, principles, complaints, aiVersion, rerunTask, applyReport, reportApplied, openTaskName, setOpenTaskName, openComplaintId, setOpenComplaintId, reviews, setReviews, showReport, setShowReport, onGoToRuleView }: { commonCats: Cat[]; privateCats: Cat[]; principles: Principle[]; complaints: Complaint[]; aiVersion: number; rerunTask: () => void; applyReport: () => void; reportApplied: boolean; openTaskName: string | null; setOpenTaskName: (name: string | null) => void; openComplaintId: string | null; setOpenComplaintId: (id: string | null) => void; reviews: Record<string, Review>; setReviews: React.Dispatch<React.SetStateAction<Record<string, Review>>>; showReport: boolean; setShowReport: (v: boolean) => void; onGoToRuleView: (name: string) => void }) {
+function QualityHome({ commonCats, privateCats, principles, complaints, aiVersion, currentRuleVersion, rerunTask, applyReport, reportApplied, openTaskName, setOpenTaskName, openComplaintId, setOpenComplaintId, reviews, setReviews, showReport, setShowReport, onGoToRuleView }: { commonCats: Cat[]; privateCats: Cat[]; principles: Principle[]; complaints: Complaint[]; aiVersion: number; currentRuleVersion: string; rerunTask: () => void; applyReport: () => void; reportApplied: boolean; openTaskName: string | null; setOpenTaskName: (name: string | null) => void; openComplaintId: string | null; setOpenComplaintId: (id: string | null) => void; reviews: Record<string, Review>; setReviews: React.Dispatch<React.SetStateAction<Record<string, Review>>>; showReport: boolean; setShowReport: (v: boolean) => void; onGoToRuleView: (name: string) => void }) {
   type TaskFilters = { date: string; rounds: string; limit: string; statuses: string[]; vipMin: string; vipMax: string; includeTags: string[]; excludeTags: string[]; agents: string[] };
-  type TaskRow = { name: string; status: string; note: string; date: string; filters?: TaskFilters };
+  type TaskRow = { name: string; status: string; note: string; date: string; ruleVersion: string; filters?: TaskFilters };
   const [tasks, setTasks] = useState<TaskRow[]>([
-    { name: "2024-10-11 客诉服务质检", status: "已完成", note: "十月第二周", date: "2024-10-11" },
-    { name: "2024-10-10 客诉服务质检", status: "有异常", note: "AI 检查中断", date: "2024-10-10" },
-    { name: "2024-10-09 客诉服务质检", status: "打分中", note: "十月第二周", date: "2024-10-09" },
+    { name: "2024-10-11 客诉服务质检", status: "已完成", note: "十月第二周", date: "2024-10-11", ruleVersion: "v31" },
+    { name: "2024-10-10 客诉服务质检", status: "有异常", note: "AI 检查中断", date: "2024-10-10", ruleVersion: "v30" },
+    { name: "2024-10-09 客诉服务质检", status: "打分中", note: "十月第二周", date: "2024-10-09", ruleVersion: "v29" },
   ]);
   const detailTask = openTaskName ? tasks.find(t => t.name === openTaskName) ?? null : null;
   const setDetailTask = (task: TaskRow | null) => setOpenTaskName(task ? task.name : null);
@@ -306,8 +317,9 @@ function QualityHome({ commonCats, privateCats, principles, complaints, aiVersio
     if (openTaskName === task.name) setOpenTaskName(null);
   }
 
-  function createTask(t: TaskRow) {
-    setTasks(prev => [t, ...prev]);
+  function createTask(t: Omit<TaskRow, "ruleVersion">) {
+    // 任务创建时锁定当前生效的规则版本，之后规则再改也不影响本任务的打分与报告口径。
+    setTasks(prev => [{ ...t, ruleVersion: currentRuleVersion }, ...prev]);
     setShowNewTask(false);
   }
 
@@ -341,6 +353,8 @@ function QualityHome({ commonCats, privateCats, principles, complaints, aiVersio
       <ConversationReview
         complaint={openComplaint}
         review={reviews[openComplaint.id] ?? null}
+        commonCats={commonCats}
+        privateCats={privateCats}
         onBack={() => setOpenComplaintId(null)}
         onSave={(r) => setReviews(prev => ({ ...prev, [openComplaint.id]: r }))}
         onGoToRule={onGoToRuleView}
@@ -363,6 +377,7 @@ function QualityHome({ commonCats, privateCats, principles, complaints, aiVersio
     return (
       <ReportView
         taskName={detailTask.name}
+        ruleVersion={detailTask.ruleVersion}
         complaints={complaints}
         reviews={reviews}
         aiVersion={aiVersion}
@@ -404,6 +419,7 @@ function QualityHome({ commonCats, privateCats, principles, complaints, aiVersio
               <h1 className="text-[15px] font-semibold text-[#2f3b48]">{detailTask.name}</h1>
               <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-[#8b96a3]">
                 {detailTask.status === "已完成" ? "AI 自动质检已完成，请逐条复审客诉；全部复审后展示客服得分汇总。" : "本次 AI 自动质检异常，请在列表中重启任务。"}
+                <span className="inline-flex items-center rounded-full border border-[#dbe4f2] bg-[#f4f8ff] px-1.5 py-0.5 text-[9px] font-medium text-[#3d6fe0]" title="本任务创建时锁定的规则版本，打分与报告均以此版本为准">适用规则 {detailTask.ruleVersion}</span>
                 {detailTask.status === "已完成" && (
                   <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium ${aiVersion > 1 ? "bg-[#eef4ff] text-[#4b7ff0]" : "bg-[#f0f2f5] text-[#98a3af]"}`}>AI 评分 v{aiVersion}{aiVersion > 1 ? "（已采纳复审意见）" : ""}</span>
                 )}
@@ -590,16 +606,16 @@ function QualityHome({ commonCats, privateCats, principles, complaints, aiVersio
                 <div className="px-4 py-8 text-center text-[11px] text-[#b0bbc8]">{(dateFrom || dateTo) ? "所选时间区间内暂无质检任务" : "暂无质检任务"}</div>
               ) : (
                 <div className="overflow-x-auto">
-                  <div style={{ minWidth: "640px" }}>
-                    <div className="grid grid-cols-[1.6fr_1fr_.8fr_.9fr_180px] bg-[#fafbfc] px-4 py-2 text-[10px] text-[#8b97a3]">
-                      <span>任务名称</span><span>备注</span><span>日期</span><span>状态</span><span>操作</span>
+                  <div style={{ minWidth: "720px" }}>
+                    <div className="grid grid-cols-[1.6fr_1fr_.8fr_.7fr_.9fr_180px] bg-[#fafbfc] px-4 py-2 text-[10px] text-[#8b97a3]">
+                      <span>任务名称</span><span>备注</span><span>日期</span><span>适用规则版本</span><span>状态</span><span>操作</span>
                     </div>
                     <div className="max-h-[228px] overflow-y-auto">
                       {filteredTasks.map(task => {
                         const editingName = editingCell?.name === task.name && editingCell.field === "name";
                         const editingNote = editingCell?.name === task.name && editingCell.field === "note";
                         return (
-                          <div key={task.name} className="grid grid-cols-[1.6fr_1fr_.8fr_.9fr_180px] items-center border-t border-[#edf0f3] px-4 py-2.5 text-left text-[11px] transition hover:bg-[#f8fbff]">
+                          <div key={task.name} className="grid grid-cols-[1.6fr_1fr_.8fr_.7fr_.9fr_180px] items-center border-t border-[#edf0f3] px-4 py-2.5 text-left text-[11px] transition hover:bg-[#f8fbff]">
                             {editingName ? (
                               <input autoFocus value={editingValue} onChange={e => setEditingValue(e.target.value)}
                                 onBlur={() => commitEdit(task)} onKeyDown={e => { if (e.key === "Enter") commitEdit(task); if (e.key === "Escape") setEditingCell(null); }}
@@ -617,6 +633,9 @@ function QualityHome({ commonCats, privateCats, principles, complaints, aiVersio
                               </span>
                             )}
                             <span className="text-[#758291]">{task.date}</span>
+                            <span>
+                              <span className="inline-flex items-center rounded-full border border-[#dbe4f2] bg-[#f4f8ff] px-2 py-0.5 text-[10px] font-medium text-[#3d6fe0]" title="任务创建时锁定的规则版本，打分与报告均以此版本为准">{task.ruleVersion}</span>
+                            </span>
                             <span>
                               {(() => {
                                 const st = task.status;
@@ -893,8 +912,16 @@ function NewTaskModal({ onClose, onCreate }: { onClose: () => void; onCreate: (t
   );
 }
 
-function ConversationReview({ complaint, review, onBack, onSave, onGoToRule }: { complaint: Complaint; review: Review | null; onBack: () => void; onSave: (r: Review) => void; onGoToRule: (name: string) => void }) {
+function ConversationReview({ complaint, review, commonCats, privateCats, onBack, onSave, onGoToRule }: { complaint: Complaint; review: Review | null; commonCats: Cat[]; privateCats: Cat[]; onBack: () => void; onSave: (r: Review) => void; onGoToRule: (name: string) => void }) {
   const involvedRules = Array.from(new Set(complaint.aiIssues.map(i => i.rule)));
+  // 全部质检规则按门类分组（通用/专用），携带各维度扣分值，供人工检索标注实际扣分点。
+  const ruleGroups = [
+    ...commonCats.map(c => ({ scope: "通用", name: c.name, rules: c.dimensions.map(d => ({ title: d.title, score: d.score })) })),
+    ...privateCats.map(c => ({ scope: "专用", name: c.name, rules: c.dimensions.map(d => ({ title: d.title, score: d.score })) })),
+  ].filter(g => g.rules.length > 0);
+  // 规则名 → 扣分值 映射，用于已选胶囊展示。
+  const ruleScoreMap: Record<string, string> = {};
+  ruleGroups.forEach(g => g.rules.forEach(r => { ruleScoreMap[r.title] = r.score; }));
   // 是否处于「异议中」：已存在未认可的复审（草稿或已提交）即视为异议进行中。
   const objecting = !!review && !review.agreed;
   const submitted = !!review && !review.agreed && review.submitted;
@@ -904,6 +931,9 @@ function ConversationReview({ complaint, review, onBack, onSave, onGoToRule }: {
   const [score, setScore] = useState(review?.suggestedScore ?? "");
   const [detail, setDetail] = useState(review?.detail ?? "");
   const [agentNote, setAgentNote] = useState(review?.agentNote ?? "");
+  const [deductedRules, setDeductedRules] = useState<string[]>(review?.deductedRules ?? []);
+  const [deductPickerOpen, setDeductPickerOpen] = useState(false);
+  const [deductSearch, setDeductSearch] = useState("");
   const [err, setErr] = useState("");
   // 已提交的异议默认只读；草稿默认可编辑。点「更新异议」才展开编辑。
   const [editing, setEditing] = useState(!submitted);
@@ -919,7 +949,7 @@ function ConversationReview({ complaint, review, onBack, onSave, onGoToRule }: {
 
   // 保存草稿（不改变 submitted 状态），跨页面（跳转规则）保留异议进度。
   function saveDraft(patch: Partial<Review>) {
-    const base: Review = review && !review.agreed ? review : { agreed: false, submitted: false, objectedRules: [], reran: false, suggestedScore: "", detail: "", agentNote: "" };
+    const base: Review = review && !review.agreed ? review : { agreed: false, submitted: false, objectedRules: [], reran: false, suggestedScore: "", detail: "", agentNote: "", deductedRules: [] };
     onSave({ ...base, ...patch });
   }
   function toggleRule(r: string) {
@@ -928,19 +958,29 @@ function ConversationReview({ complaint, review, onBack, onSave, onGoToRule }: {
     saveDraft({ objectedRules: next });
     if (err) setErr("");
   }
+  // 人工标注该客服实际扣分的规则（与「有异议规则」相互独立）。
+  function toggleDeducted(r: string) {
+    const next = deductedRules.includes(r) ? deductedRules.filter(x => x !== r) : [...deductedRules, r];
+    setDeductedRules(next);
+    saveDraft({ deductedRules: next });
+    if (err) setErr("");
+  }
+  // 总分非空且不满分（<100）时，才需要人工指出实际扣分点。
+  const needDeducted = score.trim() !== "" && !Number.isNaN(Number(score)) && Number(score) < 100;
   function agreeNoIssue() {
-    onSave({ agreed: true, submitted: true, objectedRules: [], reran: false, suggestedScore: "", detail: "", agentNote: "" });
+    onSave({ agreed: true, submitted: true, objectedRules: [], reran: false, suggestedScore: "", detail: "", agentNote: "", deductedRules: [] });
   }
   // 点「有异议」：立即建立异议草稿，返回后仍在异议流程中。
   function startObjection() {
-    setSelectedRules([]); setScore(""); setDetail(""); setAgentNote(""); setErr(""); setEditing(true);
-    onSave({ agreed: false, submitted: false, objectedRules: [], reran: false, suggestedScore: "", detail: "", agentNote: "" });
+    setSelectedRules([]); setScore(""); setDetail(""); setAgentNote(""); setDeductedRules([]); setErr(""); setEditing(true);
+    onSave({ agreed: false, submitted: false, objectedRules: [], reran: false, suggestedScore: "", detail: "", agentNote: "", deductedRules: [] });
   }
   function submitObjection() {
     if (involvedRules.length > 0 && selectedRules.length === 0) { setErr("请至少选择一个有异议的评分规则"); return; }
     if (!score.trim()) { setErr("请填写该客服应有的总分"); return; }
     if (!detail.trim()) { setErr("请填写对 AI 评分的意见"); return; }
-    onSave({ agreed: false, submitted: true, objectedRules: selectedRules, reran: !!review?.reran, suggestedScore: score.trim(), detail: detail.trim(), agentNote: agentNote.trim() });
+    if (needDeducted && deductedRules.length === 0) { setErr("该客服未满分，请选择实际扣分的规则"); return; }
+    onSave({ agreed: false, submitted: true, objectedRules: selectedRules, reran: !!review?.reran, suggestedScore: score.trim(), detail: detail.trim(), agentNote: agentNote.trim(), deductedRules: Number(score) < 100 ? deductedRules : [] });
     setErr("");
     setEditing(false);
   }
@@ -950,6 +990,7 @@ function ConversationReview({ complaint, review, onBack, onSave, onGoToRule }: {
     setScore(review?.suggestedScore ?? "");
     setDetail(review?.detail ?? "");
     setAgentNote(review?.agentNote ?? "");
+    setDeductedRules(review?.deductedRules ?? []);
     setErr("");
     setEditing(true);
     saveDraft({ submitted: false });
@@ -965,70 +1006,94 @@ function ConversationReview({ complaint, review, onBack, onSave, onGoToRule }: {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#f7f8fa]">
-      <header className="flex h-[58px] items-center gap-3 border-b border-[#e2e6eb] bg-white px-5">
-        <button onClick={onBack} className="flex items-center gap-1 rounded-md border border-[#d9e2ee] bg-white px-2.5 py-1.5 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
-          <ChevronRight className="size-3 rotate-180" />返回
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#f4f6fa]">
+      <header className="flex h-[60px] items-center gap-3 border-b border-[#e2e6eb] bg-white px-5">
+        <button onClick={onBack} className="flex size-8 items-center justify-center rounded-full border border-[#e0e7f1] bg-white text-[#4b7ff0] transition hover:border-[#c3d6f4] hover:bg-[#eef5ff]">
+          <ChevronRight className="size-4 rotate-180" />
         </button>
-        <div>
-          <h1 className="text-[15px] font-semibold text-[#2f3b48]">复审会话 · {complaint.agent}</h1>
-          <p className="mt-0.5 text-[10px] text-[#8b96a3]">用户 {complaint.user} · AI 评分 {complaint.score} 分</p>
+        <div className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-[#5a8bf5] to-[#3d6fe0] text-[12px] font-semibold text-white shadow-[0_4px_10px_rgba(75,127,240,.28)]">
+          {complaint.agent.slice(0, 1)}
+        </div>
+        <div className="min-w-0">
+          <h1 className="truncate text-[15px] font-semibold text-[#2f3b48]">复审会话 · {complaint.agent}</h1>
+          <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-[#8b96a3]">
+            <UserRound className="size-3 text-[#a8b2be]" />用户 {complaint.user}
+            <span className="text-[#d3d9e0]">·</span>
+            <Bot className="size-3 text-[#a8b2be]" />AI 评分 <span className="font-medium text-[#5a6675]">{complaint.score} 分</span>
+          </p>
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto p-5">
-        <div className="mx-auto max-w-[560px] space-y-4">
-          {/* 对话气泡 */}
-          <div className="rounded-lg border border-[#dce6f4] bg-white p-4">
-            <div className="mb-3 text-[11px] font-semibold text-[#374350]">客服与用户对话</div>
-            <div className="space-y-2.5">
-              {complaint.chat.map((m, i) => (
-                <div key={i} className={`flex ${m.from === "agent" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[75%] ${m.from === "agent" ? "items-end" : "items-start"} flex flex-col gap-0.5`}>
-                    <span className="px-1 text-[9px] text-[#a8b2be]">{m.from === "agent" ? "客服" : "用户"} · {m.time}</span>
-                    <div className={`rounded-2xl px-3 py-2 text-[11px] leading-relaxed ${m.from === "agent" ? "rounded-br-sm bg-[#4b7ff0] text-white" : "rounded-bl-sm bg-[#eef1f5] text-[#3e4c5a]"}`}>
-                      {m.text}
+      <div className="flex min-h-0 flex-1 overflow-hidden p-5">
+        <div className="mx-auto flex min-h-0 w-full max-w-[880px] gap-4">
+          {/* 左栏：客服与用户对话（独立滚动） */}
+          <div className="flex min-h-0 w-[45%] shrink-0 flex-col overflow-hidden rounded-2xl border border-[#e5ebf3] bg-white shadow-[0_2px_12px_rgba(41,53,66,.05)]">
+            <div className="flex items-center gap-2 border-b border-[#eef1f4] bg-gradient-to-r from-[#f7faff] to-white px-4 py-3">
+              <div className="flex size-6 items-center justify-center rounded-lg bg-[#eef4ff] text-[#4b7ff0]"><MessageSquareText className="size-3.5" /></div>
+              <span className="text-[11px] font-semibold text-[#374350]">客服与用户对话</span>
+              <span className="ml-auto rounded-full bg-[#f0f4fa] px-2 py-0.5 text-[9px] font-medium text-[#8b97a3]">{complaint.chat.length} 条消息</span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto bg-[#fafbfd] px-4 py-4">
+              <div className="space-y-3">
+              {complaint.chat.map((m, i) => {
+                const agent = m.from === "agent";
+                return (
+                  <div key={i} className={`flex items-end gap-2 ${agent ? "flex-row-reverse" : "flex-row"}`}>
+                    <div className={`flex size-6 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold ${agent ? "bg-gradient-to-br from-[#5a8bf5] to-[#3d6fe0] text-white" : "bg-[#e4e8ee] text-[#6b7a89]"}`}>
+                      {agent ? "服" : "客"}
+                    </div>
+                    <div className={`flex max-w-[76%] flex-col gap-1 ${agent ? "items-end" : "items-start"}`}>
+                      <span className="px-1 text-[9px] text-[#a8b2be]">{agent ? "客服" : "用户"} · {m.time}</span>
+                      <div className={`rounded-2xl px-3.5 py-2 text-[11px] leading-relaxed shadow-[0_1px_3px_rgba(41,53,66,.06)] ${agent ? "rounded-br-md bg-gradient-to-br from-[#5a8bf5] to-[#4b7ff0] text-white" : "rounded-bl-md border border-[#e9edf2] bg-white text-[#3e4c5a]"}`}>
+                        {m.text}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
+              </div>
             </div>
           </div>
 
-          {/* AI 评分明细 */}
-          <div className="rounded-lg border border-[#dce6f4] bg-white p-4">
-            <div className="mb-2 flex items-center justify-between">
+          {/* 右栏：AI 评分与复审决策（独立滚动） */}
+          <div className="min-h-0 flex-1 space-y-4 overflow-auto pr-0.5">
+            {/* AI 评分明细 */}
+            <div className="overflow-hidden rounded-2xl border border-[#e5ebf3] bg-white shadow-[0_2px_12px_rgba(41,53,66,.05)]">
+            <div className="flex items-center justify-between border-b border-[#eef1f4] bg-gradient-to-r from-[#f7faff] to-white px-4 py-3">
               <div className="flex items-center gap-2">
+                <div className="flex size-6 items-center justify-center rounded-lg bg-[#eef4ff] text-[#4b7ff0]"><Sparkles className="size-3.5" /></div>
                 <span className="text-[11px] font-semibold text-[#374350]">AI 评分明细</span>
                 {reran && <span className="rounded-full bg-[#eef4ff] px-1.5 py-0.5 text-[9px] font-medium text-[#4b7ff0]">已重运行</span>}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-baseline gap-1.5">
                 {reran ? (
-                  <span className="flex items-baseline gap-1">
+                  <>
                     <span className="text-[10px] text-[#98a3af] line-through">{complaint.score}</span>
-                    <span className={`text-[12px] font-semibold ${preview.newScore >= 90 ? "text-[#27955d]" : preview.newScore >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{preview.newScore} 分</span>
-                  </span>
+                    <span className={`text-[20px] font-bold leading-none ${preview.newScore >= 90 ? "text-[#27955d]" : preview.newScore >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{preview.newScore}</span>
+                  </>
                 ) : (
-                  <span className={`text-[12px] font-semibold ${complaint.score >= 90 ? "text-[#27955d]" : complaint.score >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{complaint.score} 分</span>
+                  <span className={`text-[20px] font-bold leading-none ${complaint.score >= 90 ? "text-[#27955d]" : complaint.score >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{complaint.score}</span>
                 )}
+                <span className="text-[10px] text-[#a8b2be]">分</span>
               </div>
             </div>
 
+            <div className="p-4">
             {/* 明细项：重运行后展示新明细，被移除项以删除线标出 */}
             {complaint.aiIssues.length === 0 ? (
-              <div className="rounded-md bg-[#f2faf5] px-3 py-2 text-[10px] text-[#27955d]">本次会话无扣分项，AI 判定表现良好。</div>
+              <div className="flex items-center gap-2 rounded-xl bg-[#f2faf5] px-3 py-2.5 text-[10px] text-[#27955d]"><Check className="size-3.5 shrink-0" />本次会话无扣分项，AI 判定表现良好。</div>
             ) : (
               <div className="space-y-2">
                 {complaint.aiIssues.map((iss, i) => {
                   const removed = reran && objectedRules.includes(iss.rule);
                   return (
-                    <div key={i} className={`rounded-md border px-3 py-2 ${removed ? "border-[#e3ead9] bg-[#f4f8ee]" : "border-[#f2e2e2] bg-[#fdf6f6]"}`}>
+                    <div key={i} className={`rounded-xl border-l-[3px] py-2 pl-3 pr-3 ${removed ? "border-l-[#8bbf5f] bg-[#f4f8ee]" : "border-l-[#e08585] bg-[#fdf6f6]"}`}>
                       <div className="mb-1 flex items-center gap-2">
-                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${removed ? "bg-[#e7f2dc] text-[#5c8a3a]" : "bg-[#fff0f0] text-[#d75d5d]"}`}>{iss.rule}</span>
-                        <span className={`text-[10px] font-medium ${removed ? "text-[#5c8a3a] line-through" : "text-[#d75d5d]"}`}>{iss.score}</span>
-                        {removed && <span className="text-[9px] text-[#5c8a3a]">已按新规则撤销扣分</span>}
+                        <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${removed ? "bg-[#e7f2dc] text-[#5c8a3a]" : "bg-[#fce8e8] text-[#d75d5d]"}`}>{iss.rule}</span>
+                        <span className={`text-[10px] font-semibold ${removed ? "text-[#5c8a3a] line-through" : "text-[#d75d5d]"}`}>{iss.score}</span>
+                        {removed && <span className="ml-auto text-[9px] text-[#5c8a3a]">已按新规则撤销扣分</span>}
                       </div>
-                      <div className={`text-[10px] italic ${removed ? "text-[#9aa891]" : "text-[#8797a5]"}`}>{iss.quote}</div>
+                      <div className={`text-[10px] italic leading-relaxed ${removed ? "text-[#9aa891]" : "text-[#8797a5]"}`}>{iss.quote}</div>
                     </div>
                   );
                 })}
@@ -1036,7 +1101,7 @@ function ConversationReview({ complaint, review, onBack, onSave, onGoToRule }: {
             )}
 
             {reran && (
-              <div className="mt-2 flex items-center gap-1.5 rounded-md bg-[#eef8f2] px-3 py-2 text-[10px] text-[#27955d]">
+              <div className="mt-3 flex items-center gap-1.5 rounded-xl bg-[#eef8f2] px-3 py-2 text-[10px] leading-relaxed text-[#27955d]">
                 <RefreshCw className="size-3 shrink-0" />
                 AI 已按修改后的规则重新评分：{complaint.score} 分 → {preview.newScore} 分（撤销 {objectedRules.length} 项扣分）。可再次修改规则后重运行。
               </div>
@@ -1044,40 +1109,45 @@ function ConversationReview({ complaint, review, onBack, onSave, onGoToRule }: {
 
             {/* 决策：仅在尚未做出任何复审结论时展示「没问题 / 有异议」 */}
             {!review && (
-              <div className="mt-3 flex items-center justify-end gap-2 border-t border-[#eef1f4] pt-3">
-                <span className="mr-auto text-[10px] text-[#8b96a3]">对以上 AI 评分是否认可？</span>
-                <button onClick={agreeNoIssue} className="rounded-md bg-[#27955d] px-3 py-1.5 text-[10px] font-medium text-white hover:bg-[#22824f]">没问题</button>
-                <button onClick={startObjection} className="rounded-md border border-[#e2b3b3] bg-white px-3 py-1.5 text-[10px] font-medium text-[#d75d5d] hover:bg-[#fdf1f1]">有异议</button>
+              <div className="mt-4 flex items-center gap-2 border-t border-[#eef1f4] pt-4">
+                <p className="mr-auto text-[10px] text-[#8b96a3]">对以上 AI 评分是否认可？</p>
+                <button onClick={startObjection} className="flex items-center gap-1.5 rounded-lg border border-[#e6c4c4] bg-white px-3.5 py-2 text-[11px] font-medium text-[#c9645f] transition hover:bg-[#fdf6f6]"><AlertCircle className="size-3.5" />有异议</button>
+                <button onClick={agreeNoIssue} className="flex items-center gap-1.5 rounded-lg bg-[#4c9e78] px-3.5 py-2 text-[11px] font-medium text-white transition hover:bg-[#44916d]"><ThumbsUp className="size-3.5" />认可，没问题</button>
               </div>
             )}
             {/* 已认可：可改为有异议 */}
             {review && review.agreed && (
-              <div className="mt-3 flex items-center justify-end gap-2 border-t border-[#eef1f4] pt-3">
-                <span className="mr-auto flex items-center gap-1 text-[10px] text-[#27955d]"><span className="size-1.5 rounded-full bg-[#34a36a]" />已确认 AI 评分无异议</span>
-                <button onClick={startObjection} className="rounded-md border border-[#d9e2ee] bg-white px-3 py-1.5 text-[10px] text-[#6b7a89] hover:bg-[#f2f5f9]">改为有异议</button>
+              <div className="mt-4 flex items-center gap-2 border-t border-[#eef1f4] pt-4">
+                <span className="mr-auto flex items-center gap-1.5 text-[10px] font-medium text-[#4c9e78]"><span className="flex size-4 items-center justify-center rounded-full bg-[#4c9e78] text-white"><Check className="size-2.5" /></span>已确认 AI 评分无异议</span>
+                <button onClick={startObjection} className="rounded-lg border border-[#d9e2ee] bg-white px-3 py-1.5 text-[10px] text-[#6b7a89] transition hover:bg-[#f2f5f9]">改为有异议</button>
               </div>
             )}
+            </div>
           </div>
 
           {/* 异议面板：只要处于异议中就一直显示（草稿或已提交），跳转规则页返回后仍在此流程 */}
           {objecting && (
-            <div className="rounded-lg border border-[#dce6f4] bg-white p-4">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-[#374350]">修改意见</span>
+            <div className="overflow-hidden rounded-2xl border border-[#e5ebf3] bg-white shadow-[0_2px_12px_rgba(41,53,66,.05)]">
+              <div className="flex items-center justify-between border-b border-[#eef1f4] bg-gradient-to-r from-[#f7faff] to-white px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <div className="flex size-6 items-center justify-center rounded-lg bg-[#eef4ff] text-[#4b7ff0]"><Pencil className="size-3.5" /></div>
+                  <span className="text-[11px] font-semibold text-[#374350]">修改意见</span>
+                </div>
                 {submitted
-                  ? <span className="flex items-center gap-1 text-[10px] text-[#27955d]"><span className="size-1.5 rounded-full bg-[#34a36a]" />已提交异议</span>
-                  : <span className="flex items-center gap-1 text-[10px] text-[#e59735]"><span className="size-1.5 rounded-full bg-[#e59735]" />异议草稿（待提交）</span>}
+                  ? <span className="flex items-center gap-1 rounded-full bg-[#eaf7f0] px-2 py-0.5 text-[10px] font-medium text-[#27955d]"><span className="size-1.5 rounded-full bg-[#34a36a]" />已提交异议</span>
+                  : <span className="flex items-center gap-1 rounded-full bg-[#fdf4e6] px-2 py-0.5 text-[10px] font-medium text-[#e59735]"><span className="size-1.5 rounded-full bg-[#e59735]" />异议草稿（待提交）</span>}
               </div>
+              <div className="p-4">
               {editing ? (
-                <div className="space-y-3">
+                <div className="space-y-3.5">
                   {involvedRules.length > 0 ? (
                     <div>
-                      <label className="mb-1 block text-[10px] text-[#8b97a3]">选择有异议的评分规则（点击规则名可跳转规则设置页修改，不再单独填写原因）</label>
+                      <label className="mb-1.5 block text-[10px] text-[#8b97a3]">选择有异议的评分规则（点击规则名可跳转规则设置页修改，不再单独填写原因）</label>
                       <div className="flex flex-wrap gap-1.5">
                         {involvedRules.map(r => {
                           const on = selectedRules.includes(r);
                           return (
-                            <div key={r} className={`flex items-center gap-1 rounded-full px-1 py-0.5 transition ${on ? "bg-[#4b7ff0]" : "bg-[#eef1f5]"}`}>
+                            <div key={r} className={`flex items-center gap-1 rounded-full px-1 py-0.5 transition ${on ? "bg-[#4b7ff0] shadow-[0_2px_6px_rgba(75,127,240,.28)]" : "bg-[#eef1f5]"}`}>
                               <button onClick={() => toggleRule(r)} className={`rounded-full px-2 py-0.5 text-[10px] ${on ? "font-medium text-white" : "text-[#6b7a89]"}`}>{on ? "✓ " : ""}{r}</button>
                               <button onClick={() => goToRuleFromObjection(r)} title="去规则设置页修改该规则" className={`grid size-4 place-items-center rounded-full ${on ? "text-white/90 hover:bg-white/20" : "text-[#8b97a3] hover:bg-[#dfe4ea]"}`}>
                                 <SlidersHorizontal className="size-2.5" />
@@ -1088,85 +1158,167 @@ function ConversationReview({ complaint, review, onBack, onSave, onGoToRule }: {
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-md bg-[#f7f9fb] px-3 py-2 text-[10px] leading-relaxed text-[#8b96a3]">本次会话 AI 未涉及任何扣分规则。你仍可对该客服的整体表现提出修改意见，请直接填写应有总分与整体意见。</div>
+                    <div className="rounded-xl bg-[#f7f9fb] px-3 py-2.5 text-[10px] leading-relaxed text-[#8b96a3]">本次会话 AI 未涉及任何扣分规则。你仍可对该客服的整体表现提出修改意见，请直接填写应有总分与整体意见。</div>
                   )}
 
                   <div>
-                    <label className="mb-1 block text-[10px] text-[#8b97a3]">该客服应有的总分{reran && <span className="ml-1 text-[#4b7ff0]">（重运行已建议 {preview.newScore} 分，可调整）</span>}</label>
+                    <label className="mb-1.5 block text-[10px] text-[#8b97a3]">该客服应有的总分{reran && <span className="ml-1 text-[#4b7ff0]">（重运行已建议 {preview.newScore} 分，可调整）</span>}</label>
                     <div className="flex items-center gap-1.5">
                       <input type="number" min={0} max={100} value={score}
                         onChange={e => { setScore(e.target.value); if (err) setErr(""); }}
                         placeholder="0 - 100"
-                        className="h-8 w-24 rounded-md border border-[#dbe3ee] bg-white px-2 text-[11px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0]" />
+                        className="h-9 w-24 rounded-xl border border-[#dbe3ee] bg-[#fafbfd] px-3 text-[13px] font-semibold text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0] focus:bg-white" />
                       <span className="text-[10px] text-[#8b97a3]">分</span>
                     </div>
                   </div>
 
+                  {needDeducted && (
+                    <div>
+                      <label className="mb-1.5 block text-[10px] text-[#8b97a3]">该客服实际扣分的规则<span className="ml-1 text-[#a8b2be]">（未满分，请指出实际失分的规则；可多选，涵盖全部质检规则）</span></label>
+                      {/* 统一为一个「标签输入框」：已选胶囊内嵌其中，末尾内联「+ 添加」触发，下拉从下方弹出 */}
+                      <div className="relative">
+                        <div
+                          onClick={() => { if (!deductPickerOpen) { setDeductPickerOpen(true); setDeductSearch(""); } }}
+                          className={`flex min-h-9 cursor-text flex-wrap items-center gap-1.5 rounded-xl border bg-[#fafbfd] px-2 py-1.5 transition ${deductPickerOpen ? "border-[#4b7ff0] bg-white" : "border-[#dbe3ee] hover:border-[#c3d0e0]"}`}>
+                          {deductedRules.map(r => (
+                            <span key={r} className="flex items-center gap-1 rounded-lg bg-[#fdf4e6] py-0.5 pl-2 pr-1 text-[10px] text-[#b9791d]">
+                              <span className="font-medium">{r}</span>
+                              {ruleScoreMap[r] && <span className="font-semibold text-[#a3701a]">{ruleScoreMap[r]}</span>}
+                              <button onClick={e => { e.stopPropagation(); toggleDeducted(r); }} className="grid size-3.5 place-items-center rounded text-[#c99a4e] hover:bg-[#f2e2c4] hover:text-[#8a5e10]"><X className="size-2.5" /></button>
+                            </span>
+                          ))}
+                          <span className="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[10px] text-[#8b97a3]">
+                            <Plus className="size-3" />{deductedRules.length > 0 ? "添加" : "点击选择扣分规则"}
+                          </span>
+                        </div>
+                        {deductPickerOpen && (
+                          <>
+                            <div className="fixed inset-0 z-10" onClick={() => setDeductPickerOpen(false)} />
+                            <div className="absolute left-0 right-0 z-20 mt-1 overflow-hidden rounded-xl border border-[#dde5ee] bg-white shadow-[0_12px_32px_rgba(41,53,66,.16)]">
+                              <div className="border-b border-[#eef1f4] p-2">
+                                <input autoFocus value={deductSearch} onChange={e => setDeductSearch(e.target.value)}
+                                  placeholder="搜索规则名称…"
+                                  className="h-7 w-full rounded-lg border border-[#e2e8f0] bg-[#fafbfd] px-2.5 text-[10px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0] focus:bg-white" />
+                              </div>
+                              <div className="max-h-[180px] overflow-auto p-1.5">
+                                {(() => {
+                                  const kw = deductSearch.trim();
+                                  const groups = ruleGroups
+                                    .map(g => ({ ...g, rules: g.rules.filter(r => r.title.includes(kw)) }))
+                                    .filter(g => g.rules.length > 0);
+                                  if (groups.length === 0) return <div className="px-2 py-5 text-center text-[10px] text-[#b0bbc8]">未找到匹配的规则</div>;
+                                  return groups.map(g => (
+                                    <div key={`${g.scope}-${g.name}`} className="mb-1.5 last:mb-0">
+                                      <div className="flex items-center gap-1.5 px-2 py-1">
+                                        <span className={`rounded px-1 py-px text-[8px] font-medium ${g.scope === "通用" ? "bg-[#eef4ff] text-[#4b7ff0]" : "bg-[#eef7f1] text-[#3d8f63]"}`}>{g.scope}</span>
+                                        <span className="text-[9px] font-medium text-[#98a3af]">{g.name}</span>
+                                      </div>
+                                      {g.rules.map(r => {
+                                        const on = deductedRules.includes(r.title);
+                                        return (
+                                          <button key={r.title} onClick={() => toggleDeducted(r.title)}
+                                            className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[10px] transition ${on ? "bg-[#fdf4e6]" : "hover:bg-[#f4f6fa]"}`}>
+                                            <span className={`grid size-3.5 shrink-0 place-items-center rounded-md border transition ${on ? "border-[#e59735] bg-[#e59735] text-white" : "border-[#cdd6e0] bg-white"}`}>{on && <Check className="size-2.5" />}</span>
+                                            <span className={`flex-1 truncate ${on ? "font-medium text-[#b9791d]" : "text-[#5a6675]"}`}>{r.title}</span>
+                                            {r.score && <span className={`shrink-0 text-[10px] font-semibold ${on ? "text-[#b9791d]" : "text-[#c56a63]"}`}>{r.score}</span>}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  ));
+                                })()}
+                              </div>
+                              <div className="flex items-center justify-between border-t border-[#eef1f4] bg-[#fafbfd] px-2.5 py-1.5">
+                                <span className="text-[9px] text-[#a8b2be]">已选 {deductedRules.length} 项</span>
+                                <button onClick={() => setDeductPickerOpen(false)} className="rounded-md bg-[#4b7ff0] px-2.5 py-1 text-[9px] font-medium text-white hover:bg-[#3d6fe0]">完成</button>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div>
-                    <label className="mb-1 block text-[10px] text-[#8b97a3]">对 AI 评分的意见</label>
+                    <label className="mb-1.5 block text-[10px] text-[#8b97a3]">对 AI 评分的意见</label>
                     <textarea value={detail} ref={detailRef}
                       onChange={e => { setDetail(e.target.value); if (err) setErr(""); }}
                       rows={3}
                       placeholder="期待听听您的专业意见——对上述每条规则，您认为应扣多少分？以及是否有需要调整的地方？"
-                      className="w-full resize-none overflow-hidden rounded-md border border-[#dbe3ee] bg-white px-3 py-2 text-[11px] leading-relaxed text-[#3e4c5a] outline-none focus:border-[#4b7ff0]" />
+                      className="w-full resize-none overflow-hidden rounded-xl border border-[#dbe3ee] bg-[#fafbfd] px-3 py-2.5 text-[11px] leading-relaxed text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0] focus:bg-white" />
                   </div>
 
                   <div>
-                    <label className="mb-1 block text-[10px] text-[#8b97a3]">对人工客服评分备注<span className="ml-1 text-[#a8b2be]">（选填）</span></label>
+                    <label className="mb-1.5 block text-[10px] text-[#8b97a3]">对人工客服评分备注<span className="ml-1 text-[#a8b2be]">（选填）</span></label>
                     <textarea value={agentNote}
                       onChange={e => setAgentNote(e.target.value)}
                       rows={3}
                       placeholder="针对该客服本次表现的评分说明、改进建议等（将随最终结果反馈给客服）"
-                      className="w-full resize-none rounded-md border border-[#dbe3ee] bg-white px-3 py-2 text-[11px] leading-relaxed text-[#3e4c5a] outline-none focus:border-[#4b7ff0]" />
+                      className="w-full resize-none rounded-xl border border-[#dbe3ee] bg-[#fafbfd] px-3 py-2.5 text-[11px] leading-relaxed text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0] focus:bg-white" />
                   </div>
 
-                  {err && <div className="text-[10px] text-[#d75d5d]">{err}</div>}
+                  {err && <div className="flex items-center gap-1 text-[10px] text-[#d75d5d]"><AlertCircle className="size-3" />{err}</div>}
 
-                  <div className="flex items-center justify-end gap-2">
-                    <button onClick={agreeNoIssue} className="mr-auto text-[10px] text-[#8b97a3] hover:text-[#6b7a89]">撤销异议，改为认可</button>
-                    <button onClick={submitObjection} className="rounded-md bg-[#4b7ff0] px-3 py-1.5 text-[10px] font-medium text-white hover:bg-[#3d6fe0]">提交异议</button>
+                  <div className="flex items-center justify-end gap-2 border-t border-[#eef1f4] pt-3">
+                    <button onClick={agreeNoIssue} className="mr-auto text-[10px] text-[#8b97a3] transition hover:text-[#6b7a89]">撤销异议，改为认可</button>
+                    <button onClick={submitObjection} className="flex items-center gap-1.5 rounded-xl bg-gradient-to-b from-[#5a8bf5] to-[#4b7ff0] px-4 py-2 text-[11px] font-medium text-white shadow-[0_4px_10px_rgba(75,127,240,.24)] transition hover:brightness-105"><Check className="size-3.5" />提交异议</button>
                   </div>
                 </div>
               ) : (
                 /* 已提交：只读展示，点「更新异议」才可编辑 */
-                <div className="space-y-3">
+                <div className="space-y-3.5">
                   {review!.objectedRules.length > 0 && (
                     <div>
-                      <div className="mb-1 text-[10px] text-[#8b97a3]">有异议的评分规则</div>
+                      <div className="mb-1.5 text-[10px] text-[#8b97a3]">有异议的评分规则</div>
                       <div className="flex flex-wrap gap-1.5">
                         {review!.objectedRules.map(r => (
-                          <span key={r} className="rounded-full bg-[#eef4ff] px-2.5 py-1 text-[10px] text-[#4b7ff0]">{r}</span>
+                          <span key={r} className="rounded-full bg-[#eef4ff] px-2.5 py-1 text-[10px] font-medium text-[#4b7ff0]">{r}</span>
                         ))}
                       </div>
                     </div>
                   )}
                   <div>
-                    <div className="mb-1 text-[10px] text-[#8b97a3]">该客服应有的总分</div>
-                    <span className={`text-[12px] font-semibold ${Number(review!.suggestedScore) >= 90 ? "text-[#27955d]" : Number(review!.suggestedScore) >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{review!.suggestedScore} 分</span>
+                    <div className="mb-1.5 text-[10px] text-[#8b97a3]">该客服应有的总分</div>
+                    <span className={`text-[18px] font-bold ${Number(review!.suggestedScore) >= 90 ? "text-[#27955d]" : Number(review!.suggestedScore) >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{review!.suggestedScore}<span className="ml-0.5 text-[10px] font-normal text-[#a8b2be]">分</span></span>
+                  </div>
+                  {review!.deductedRules.length > 0 && (
+                    <div>
+                      <div className="mb-1.5 text-[10px] text-[#8b97a3]">该客服实际扣分的规则</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {review!.deductedRules.map(r => (
+                          <span key={r} className="flex items-center gap-1.5 rounded-full bg-[#fdf4e6] px-2.5 py-1 text-[10px] text-[#b9791d]">
+                            <span className="font-medium">{r}</span>
+                            {ruleScoreMap[r] && <span className="rounded-full bg-[#f6e3c2] px-1.5 py-px text-[9px] font-semibold text-[#a3701a]">{ruleScoreMap[r]}</span>}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <div className="mb-1.5 text-[10px] text-[#8b97a3]">对 AI 评分的意见</div>
+                    <div className="whitespace-pre-wrap rounded-xl bg-[#f7f9fb] px-3 py-2.5 text-[11px] leading-relaxed text-[#3e4c5a]">{review!.detail || "—"}</div>
                   </div>
                   <div>
-                    <div className="mb-1 text-[10px] text-[#8b97a3]">对 AI 评分的意见</div>
-                    <div className="whitespace-pre-wrap rounded-md bg-[#f7f9fb] px-3 py-2 text-[11px] leading-relaxed text-[#3e4c5a]">{review!.detail || "—"}</div>
+                    <div className="mb-1.5 text-[10px] text-[#8b97a3]">对人工客服评分备注</div>
+                    <div className="whitespace-pre-wrap rounded-xl bg-[#f7f9fb] px-3 py-2.5 text-[11px] leading-relaxed text-[#3e4c5a]">{review!.agentNote || "—"}</div>
                   </div>
-                  <div>
-                    <div className="mb-1 text-[10px] text-[#8b97a3]">对人工客服评分备注</div>
-                    <div className="whitespace-pre-wrap rounded-md bg-[#f7f9fb] px-3 py-2 text-[11px] leading-relaxed text-[#3e4c5a]">{review!.agentNote || "—"}</div>
-                  </div>
-                  <div className="flex items-center justify-end gap-2">
-                    <button onClick={agreeNoIssue} className="mr-auto text-[10px] text-[#8b97a3] hover:text-[#6b7a89]">撤销异议，改为认可</button>
-                    <button onClick={editObjection} className="rounded-md border border-[#d9e2ee] bg-white px-3 py-1.5 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">更新异议</button>
+                  <div className="flex items-center justify-end gap-2 border-t border-[#eef1f4] pt-3">
+                    <button onClick={agreeNoIssue} className="mr-auto text-[10px] text-[#8b97a3] transition hover:text-[#6b7a89]">撤销异议，改为认可</button>
+                    <button onClick={editObjection} className="flex items-center gap-1.5 rounded-xl border border-[#d9e2ee] bg-white px-3 py-2 text-[10px] text-[#4b7ff0] transition hover:bg-[#eef5ff]"><Pencil className="size-3" />更新异议</button>
                   </div>
                 </div>
               )}
+              </div>
             </div>
           )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function ReportView({ taskName, complaints, reviews, aiVersion, commonCats, privateCats, principles, applied, onBack, onApply }: { taskName: string; complaints: Complaint[]; reviews: Record<string, Review>; aiVersion: number; commonCats: Cat[]; privateCats: Cat[]; principles: Principle[]; applied: boolean; onBack: () => void; onApply: () => void }) {
+function ReportView({ taskName, ruleVersion, complaints, reviews, aiVersion, commonCats, privateCats, principles, applied, onBack, onApply }: { taskName: string; ruleVersion: string; complaints: Complaint[]; reviews: Record<string, Review>; aiVersion: number; commonCats: Cat[]; privateCats: Cat[]; principles: Principle[]; applied: boolean; onBack: () => void; onApply: () => void }) {
   const objectionCount = complaints.filter(c => { const r = reviews[c.id]; return r && !r.agreed && r.submitted; }).length;
   const agreedCount = complaints.filter(c => reviews[c.id]?.agreed).length;
 
@@ -1266,7 +1418,10 @@ function ReportView({ taskName, complaints, reviews, aiVersion, commonCats, priv
           </button>
           <div>
             <h1 className="text-[15px] font-semibold text-[#2f3b48]">复审报告 · {taskName}</h1>
-            <p className="mt-0.5 text-[10px] text-[#8b96a3]">共 {complaints.length} 条客诉复审完毕（{agreedCount} 条认可 AI 评分，{objectionCount} 条提出修改意见），涉及 {dimOps.length} 条评分维度、{principleOps.length} 条评分原则需优化</p>
+            <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-[#8b96a3]">
+              <span className="inline-flex items-center rounded-full border border-[#dbe4f2] bg-[#f4f8ff] px-1.5 py-0.5 font-medium text-[#3d6fe0]" title="本报告依据任务创建时锁定的规则版本生成，与打分口径一致">依据规则 {ruleVersion}</span>
+              <span>共 {complaints.length} 条客诉复审完毕（{agreedCount} 条认可 AI 评分，{objectionCount} 条提出修改意见），涉及 {dimOps.length} 条评分维度、{principleOps.length} 条评分原则需优化</span>
+            </p>
           </div>
         </div>
       </header>
@@ -1393,6 +1548,18 @@ function ReportView({ taskName, complaints, reviews, aiVersion, commonCats, priv
 type Dim = { title: string; score: string; standard: string; criteria: string };
 type Cat = { name: string; expanded: boolean; enabled: boolean; renaming: boolean; dimensions: Dim[] };
 type NewDimDraft = { title: string; score: string; standard: string; criteria: string };
+
+// —— 规则版本管理 ——
+const MAX_VERSIONS = 30;
+type RuleVersion = { id: string; seq: number; note: string; author: string; savedAt: string; commonCats: Cat[]; privateCats: Cat[]; principles: Principle[] };
+const stripCat = (c: Cat) => ({ name: c.name, enabled: c.enabled, dimensions: c.dimensions.map(d => ({ ...d })) });
+// 仅比较规则内容，忽略展开/重命名等 UI 状态。
+const rulesFingerprint = (common: Cat[], priv: Cat[], principles: Principle[]) =>
+  JSON.stringify({ c: common.map(stripCat), p: priv.map(stripCat), r: principles });
+// 载入某版本内容为工作副本时，重置 UI 状态。
+const hydrateCat = (c: Cat): Cat => ({ name: c.name, enabled: c.enabled, expanded: false, renaming: false, dimensions: c.dimensions.map(d => ({ ...d })) });
+const pad2 = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+const fmtVersionTime = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 
 function RulesList({
   label,
@@ -1779,7 +1946,7 @@ function PrinciplesList({ principles, setPrinciples, readOnly }: { principles: P
   );
 }
 
-function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, principles, setPrinciples, targetRuleName, targetEditable, onTargetConsumed, onRulesModified, showBack, onBack, readOnly }: {
+function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, principles, setPrinciples, targetRuleName, targetEditable, onTargetConsumed, onRulesModified, showBack, onBack, readOnly, versions, latestVersion, totalSeq, isDirty, viewingVersionId, setViewingVersionId, onSaveVersion, onDiscardChanges, onRestoreVersion }: {
   commonCats: Cat[]; setCommonCats: React.Dispatch<React.SetStateAction<Cat[]>>;
   privateCats: Cat[]; setPrivateCats: React.Dispatch<React.SetStateAction<Cat[]>>;
   principles: Principle[]; setPrinciples: React.Dispatch<React.SetStateAction<Principle[]>>;
@@ -1788,10 +1955,16 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, pri
   showBack?: boolean;
   onBack?: () => void;
   readOnly?: boolean;
+  versions: RuleVersion[]; latestVersion: RuleVersion; totalSeq: number; isDirty: boolean;
+  viewingVersionId: string | null; setViewingVersionId: (id: string | null) => void;
+  onSaveVersion: (note: string) => void; onDiscardChanges: () => void; onRestoreVersion: (id: string) => void;
 }) {
   const inCommon = targetRuleName ? commonCats.some(c => c.dimensions.some(d => d.title === targetRuleName)) : false;
   const inPrivate = targetRuleName ? privateCats.some(c => c.dimensions.some(d => d.title === targetRuleName)) : false;
   const [tab, setTab] = useState<"common" | "private" | "principle">("common");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveNote, setSaveNote] = useState("");
 
   React.useEffect(() => {
     if (targetRuleName) {
@@ -1799,6 +1972,29 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, pri
       else if (inPrivate) setTab("private");
     }
   }, [targetRuleName]);
+
+  // 正在查看的历史版本（若有）——预览时用它的内容并强制只读。
+  const previewVersion = viewingVersionId ? versions.find(v => v.id === viewingVersionId) ?? null : null;
+  const isPreview = !!previewVersion;
+  const canEdit = !readOnly && !isPreview;
+  // 预览用本地副本：内容只读，但需要可展开/收起门类，故给一份可变的 UI 副本。
+  const [previewCommon, setPreviewCommon] = useState<Cat[]>([]);
+  const [previewPrivate, setPreviewPrivate] = useState<Cat[]>([]);
+  React.useEffect(() => {
+    if (previewVersion) {
+      setPreviewCommon(previewVersion.commonCats.map(hydrateCat));
+      setPreviewPrivate(previewVersion.privateCats.map(hydrateCat));
+    }
+  }, [viewingVersionId]);
+  const shownCommon = isPreview ? previewCommon : commonCats;
+  const shownPrivate = isPreview ? previewPrivate : privateCats;
+  const shownPrinciples = previewVersion ? previewVersion.principles : principles;
+
+  function confirmSave() {
+    onSaveVersion(saveNote);
+    setSaveNote("");
+    setSaveOpen(false);
+  }
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#f7f8fa]">
@@ -1810,26 +2006,115 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, pri
           </h1>
           <p className="mt-0.5 text-[10px] text-[#8b96a3]">{readOnly ? "仅业务管理者/超级管理者可修改规则，你可查看全部内容" : "配置规则门类、评分维度与扣分标准"}</p>
         </div>
-        {showBack && onBack && (
-          <button onClick={onBack} className="flex items-center gap-1 rounded-md border border-[#4b7ff0] bg-[#eaf2ff] px-2.5 py-1.5 text-[10px] font-medium text-[#3562c8] hover:bg-[#dceeff]">
-            <ChevronRight className="size-3 rotate-180" />返回复核结果
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* 历史版本入口 */}
+          <div className="relative" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setHistoryOpen(o => !o)} className="flex items-center gap-1 rounded-md border border-[#d9e2ee] bg-white px-2.5 py-1.5 text-[10px] text-[#5b6b7b] hover:bg-[#f2f6fb]">
+              <History className="size-3.5" />
+              {isPreview ? `查看中：${previewVersion!.id}` : `当前 ${latestVersion.id}`}
+              {isDirty && !isPreview && <span className="ml-0.5 rounded-full bg-[#fdeede] px-1.5 py-0.5 text-[9px] font-medium text-[#c9821f]">未保存</span>}
+            </button>
+            {historyOpen && (
+              <div className="absolute right-0 top-9 z-30 w-[300px] overflow-hidden rounded-lg border border-[#dde5ee] bg-white shadow-[0_12px_32px_rgba(41,53,66,.18)]">
+                <div className="border-b border-[#eef1f4] px-3 py-2 text-[11px] font-semibold text-[#374350]">历史版本</div>
+                <div className="max-h-[280px] overflow-auto">
+                  {isDirty && (
+                    <div className="flex items-center gap-2 border-b border-[#f2f4f7] bg-[#fffaf1] px-3 py-2">
+                      <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-[#e59735]" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] font-medium text-[#b9791d]">当前有未保存的修改</div>
+                        <div className="mt-0.5 text-[9px] text-[#c9a566]">保存后将生成新版本</div>
+                      </div>
+                    </div>
+                  )}
+                  {versions.map(v => {
+                    const active = isPreview ? v.id === viewingVersionId : v.id === latestVersion.id && !isDirty;
+                    return (
+                      <button key={v.id} onClick={() => { if (v.id === latestVersion.id) setViewingVersionId(null); else setViewingVersionId(v.id); setHistoryOpen(false); }}
+                        className={`flex w-full items-start gap-2 border-b border-[#f2f4f7] px-3 py-2.5 text-left last:border-b-0 hover:bg-[#f4f7fb] ${active ? "bg-[#eef5ff]" : ""}`}>
+                        <div className={`mt-0.5 grid size-4 shrink-0 place-items-center rounded-full ${active ? "bg-[#4b7ff0] text-white" : "bg-[#eef1f4] text-transparent"}`}><Check className="size-2.5" /></div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] font-semibold text-[#3e4c5a]">{v.id}</span>
+                            {v.id === latestVersion.id && <span className="rounded-full bg-[#eaf6ef] px-1.5 py-0.5 text-[9px] font-medium text-[#27955d]">最新</span>}
+                          </div>
+                          <div className="mt-0.5 truncate text-[10px] text-[#5b6b7b]" title={v.note}>{v.note}</div>
+                          <div className="mt-0.5 flex items-center gap-1 text-[9px] text-[#98a3af]"><Clock className="size-2.5" />{v.savedAt} · {v.author}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {totalSeq - versions.length > 0 && (
+                  <div className="border-t border-[#eef1f4] bg-[#fafbfc] px-3 py-2 text-[9px] leading-relaxed text-[#a8b2be]">
+                    已累计提交 {totalSeq} 个版本，仅保留最近 {MAX_VERSIONS} 个；更早的 {totalSeq - versions.length} 个版本（v1 ~ v{totalSeq - versions.length}）已自动清理。
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          {/* 保存入口统一收敛到下方「未保存修改」提示条，避免重复 */}
+          {showBack && onBack && (
+            <button onClick={onBack} className="flex items-center gap-1 rounded-md border border-[#4b7ff0] bg-[#eaf2ff] px-2.5 py-1.5 text-[10px] font-medium text-[#3562c8] hover:bg-[#dceeff]">
+              <ChevronRight className="size-3 rotate-180" />返回复核结果
+            </button>
+          )}
+        </div>
       </header>
-      <div className="min-h-0 flex-1 overflow-auto p-5">
+      <div className="min-h-0 flex-1 overflow-auto p-5" onClick={() => setHistoryOpen(false)}>
+        {/* 预览历史版本提示条 */}
+        {isPreview && (
+          <div className="mb-3 flex items-center gap-2 rounded-lg border border-[#d5e0f5] bg-[#eef5ff] px-4 py-2.5 text-[11px] text-[#3562c8]">
+            <History className="size-4 shrink-0" />
+            <span className="flex-1">正在查看历史版本 <b>{previewVersion!.id}</b>（{previewVersion!.note}），仅供浏览，不影响当前生效的规则。</span>
+            {!readOnly && (
+              <button onClick={() => onRestoreVersion(previewVersion!.id)} className="flex items-center gap-1 rounded-md bg-[#4b7ff0] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[#3d6fe0]">
+                <RotateCcw className="size-3" />回滚到此版本
+              </button>
+            )}
+            <button onClick={() => setViewingVersionId(null)} className="rounded-md border border-[#c9d8ee] bg-white px-2.5 py-1 text-[10px] text-[#3562c8] hover:bg-[#f2f6fb]">退出查看</button>
+          </div>
+        )}
+        {/* 未保存修改提示条 */}
+        {canEdit && isDirty && (
+          <div className="mb-3 flex items-center gap-2 rounded-lg border border-[#f0dcb8] bg-[#fffaf1] px-4 py-2.5 text-[11px] text-[#b9791d]">
+            <span className="size-1.5 shrink-0 rounded-full bg-[#e59735]" />
+            <span className="flex-1">规则已修改但尚未保存为版本。</span>
+            <button onClick={() => { setSaveNote(""); setSaveOpen(true); }} className="rounded-md bg-[#4b7ff0] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[#3d6fe0]">保存为新版本</button>
+            <button onClick={onDiscardChanges} className="rounded-md border border-[#e6d3ad] bg-white px-2.5 py-1 text-[10px] text-[#b9791d] hover:bg-[#fff4e2]">放弃修改</button>
+          </div>
+        )}
         <div className="mb-3 flex w-fit rounded-md border border-[#dfe5ea] bg-white p-0.5">
           <button onClick={() => setTab("principle")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "principle" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>评分原则</button>
           <button onClick={() => setTab("common")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "common" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>通用质检规则列表</button>
           <button onClick={() => setTab("private")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "private" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>专用质检规则列表</button>
         </div>
         {tab === "common" ? (
-          <RulesList label="通用规则" sublabel="适用于全部客服会话的基础质检要求" cats={commonCats} setCats={setCommonCats} targetRuleName={tab === "common" ? targetRuleName : null} targetEditable={targetEditable} onTargetConsumed={onTargetConsumed} onRulesModified={onRulesModified} readOnly={readOnly}/>
+          <RulesList label="通用规则" sublabel="适用于全部客服会话的基础质检要求" cats={shownCommon} setCats={isPreview ? setPreviewCommon : setCommonCats} targetRuleName={tab === "common" && !isPreview ? targetRuleName : null} targetEditable={targetEditable} onTargetConsumed={onTargetConsumed} onRulesModified={onRulesModified} readOnly={!canEdit}/>
         ) : tab === "private" ? (
-          <RulesList label="专用规则" sublabel="仅对指定业务线、活动或场景生效" cats={privateCats} setCats={setPrivateCats} targetRuleName={tab === "private" ? targetRuleName : null} targetEditable={targetEditable} onTargetConsumed={onTargetConsumed} onRulesModified={onRulesModified} readOnly={readOnly}/>
+          <RulesList label="专用规则" sublabel="仅对指定业务线、活动或场景生效" cats={shownPrivate} setCats={isPreview ? setPreviewPrivate : setPrivateCats} targetRuleName={tab === "private" && !isPreview ? targetRuleName : null} targetEditable={targetEditable} onTargetConsumed={onTargetConsumed} onRulesModified={onRulesModified} readOnly={!canEdit}/>
         ) : (
-          <PrinciplesList principles={principles} setPrinciples={setPrinciples} readOnly={readOnly}/>
+          <PrinciplesList principles={shownPrinciples} setPrinciples={setPrinciples} readOnly={!canEdit}/>
         )}
       </div>
+
+      {/* 保存新版本弹窗 */}
+      {saveOpen && (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-black/30 p-6" onClick={() => setSaveOpen(false)}>
+          <div className="w-full max-w-[380px] rounded-xl bg-white p-5 shadow-[0_20px_50px_rgba(41,53,66,.28)]" onClick={e => e.stopPropagation()}>
+            <div className="mb-1 flex items-center gap-2 text-[13px] font-semibold text-[#2f3b48]"><Check className="size-4 text-[#4b7ff0]" />保存为新版本</div>
+            <p className="mb-3 text-[10px] leading-relaxed text-[#8b96a3]">当前修改将保存为 <b className="text-[#4b7ff0]">v{latestVersion.seq + 1}</b>，历史版本仍可随时查看或恢复。</p>
+            <label className="mb-1 block text-[10px] text-[#8b97a3]">版本说明<span className="ml-1 text-[#a8b2be]">（选填，便于日后识别）</span></label>
+            <textarea autoFocus value={saveNote} onChange={e => setSaveNote(e.target.value)} rows={3}
+              placeholder="例：上调「精准答疑」扣分至 -5，新增「敷衍用户」维度"
+              className="w-full resize-none rounded-md border border-[#dbe3ee] bg-white px-3 py-2 text-[11px] leading-relaxed text-[#3e4c5a] outline-none focus:border-[#4b7ff0]" />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setSaveOpen(false)} className="rounded-md border border-[#d9e2ee] bg-white px-3 py-1.5 text-[11px] text-[#6b7a89] hover:bg-[#f2f5f9]">取消</button>
+              <button onClick={confirmSave} className="rounded-md bg-[#4b7ff0] px-3 py-1.5 text-[11px] font-medium text-white hover:bg-[#3d6fe0]">确认保存</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2376,6 +2661,78 @@ export default function App() {
     { title: "实质回应从宽认定", content: "客服已记录/已提交工单/已查询告知/权限外如实告知的，视为已实质回应，不判核心封顶。" },
   ];
   const [principles, setPrinciples] = useState(initPrinciples);
+  // —— 规则版本管理：versions[0] 为最新已保存版本；工作副本即上面的 commonCats/privateCats/principles ——
+  // 演示数据：已累计提交 34 个版本，超过 30 版上限，最早的 v1~v4 已被自动清理，
+  // 仅保留最近 30 个版本（v5 ~ v34）。
+  const seedVersions = (): RuleVersion[] => {
+    const notes: Record<number, string> = {
+      34: "上调「精准答疑」封顶扣分至 -5",
+      33: "新增「敷衍用户」维度",
+      32: "细化「安抚不到位」判断标准",
+      31: "调整「缺乏耐心」适用范围",
+      5: "补充活动/福利专用规则门类",
+    };
+    const list: RuleVersion[] = [];
+    for (let seq = 34; seq >= 5; seq--) {
+      list.push({
+        id: `v${seq}`, seq,
+        note: notes[seq] ?? `第 ${seq} 次规则调整`,
+        author: seq % 2 === 0 ? "超级管理员" : "李伟",
+        savedAt: `2026-07-${pad2(((seq - 5) % 8) + 20)} ${pad2(9 + (seq % 8))}:${pad2((seq * 7) % 60)}`,
+        commonCats: initCommonCats.map(hydrateCat), privateCats: initPrivateCats.map(hydrateCat), principles: initPrinciples,
+      });
+    }
+    return list;
+  };
+  const [versions, setVersions] = useState<RuleVersion[]>(seedVersions);
+  // 累计提交过的版本总数（含已被清理的），用于展示“已清理 N 个更早版本”。
+  const [totalSeq, setTotalSeq] = useState(34);
+  // 当前正在「查看」的历史版本（null = 正在编辑工作副本）。
+  const [viewingVersionId, setViewingVersionId] = useState<string | null>(null);
+  const latestVersion = versions[0];
+  const isDirty = rulesFingerprint(commonCats, privateCats, principles) !== rulesFingerprint(latestVersion.commonCats, latestVersion.privateCats, latestVersion.principles);
+
+  // 提交新版本前的封顶淘汰逻辑：纯滚动淘汰，只保留最近 30 版，超出即丢弃最早的。
+  const capVersions = (list: RuleVersion[]) => list.slice(0, MAX_VERSIONS);
+
+  function saveVersion(note: string) {
+    const seq = latestVersion.seq + 1;
+    const now = new Date();
+    const v: RuleVersion = {
+      id: `v${seq}`, seq, note: note.trim() || `版本 v${seq}`,
+      author: currentUser?.name ?? "—", savedAt: fmtVersionTime(now),
+      commonCats: commonCats.map(hydrateCat), privateCats: privateCats.map(hydrateCat), principles: principles.map(p => ({ ...p })),
+    };
+    setVersions(prev => capVersions([v, ...prev]));
+    setTotalSeq(seq);
+    setViewingVersionId(null);
+  }
+  // 放弃未保存改动，回到最新版本内容。
+  function discardChanges() {
+    setCommonCats(latestVersion.commonCats.map(hydrateCat));
+    setPrivateCats(latestVersion.privateCats.map(hydrateCat));
+    setPrinciples(latestVersion.principles.map(p => ({ ...p })));
+    setViewingVersionId(null);
+  }
+  // 回滚到某历史版本：把该版本内容原子地提交为一个新版本（线性递增，不产生分支），
+  // 当前工作副本即变为该内容且与最新版一致（不留「未保存」态）。
+  function restoreVersion(id: string) {
+    const src = versions.find(x => x.id === id);
+    if (!src) return;
+    const seq = latestVersion.seq + 1;
+    const now = new Date();
+    const v: RuleVersion = {
+      id: `v${seq}`, seq, note: `回滚自 ${src.id}${src.note ? `（${src.note}）` : ""}`,
+      author: currentUser?.name ?? "—", savedAt: fmtVersionTime(now),
+      commonCats: src.commonCats.map(hydrateCat), privateCats: src.privateCats.map(hydrateCat), principles: src.principles.map(p => ({ ...p })),
+    };
+    setVersions(prev => capVersions([v, ...prev]));
+    setTotalSeq(seq);
+    setCommonCats(v.commonCats.map(hydrateCat));
+    setPrivateCats(v.privateCats.map(hydrateCat));
+    setPrinciples(v.principles.map(p => ({ ...p })));
+    setViewingVersionId(null);
+  }
   if (closed)
     return (
       <main className="grid h-dvh place-items-center bg-[#edf1f4] font-['Noto_Sans_SC']">
@@ -2405,11 +2762,12 @@ export default function App() {
           ) : view === "records" ? (
             <AgentRecords currentUser={currentUser} />
           ) : view === "quality" ? (
-            <QualityHome commonCats={commonCats} privateCats={privateCats} principles={principles} complaints={complaints} aiVersion={aiVersion} rerunTask={rerunTask} applyReport={applyReport} reportApplied={reportApplied} openTaskName={openTaskName} setOpenTaskName={setOpenTaskName} openComplaintId={openComplaintId} setOpenComplaintId={setOpenComplaintId} reviews={reviews} setReviews={setReviews} showReport={showReport} setShowReport={setShowReport} onGoToRuleView={(name) => goToRule(name, false)}/>
+            <QualityHome commonCats={commonCats} privateCats={privateCats} principles={principles} complaints={complaints} aiVersion={aiVersion} currentRuleVersion={latestVersion.id} rerunTask={rerunTask} applyReport={applyReport} reportApplied={reportApplied} openTaskName={openTaskName} setOpenTaskName={setOpenTaskName} openComplaintId={openComplaintId} setOpenComplaintId={setOpenComplaintId} reviews={reviews} setReviews={setReviews} showReport={showReport} setShowReport={setShowReport} onGoToRuleView={(name) => goToRule(name, false)}/>
           ) : view === "members" ? (
             <MembersPage accounts={accounts} onSetRole={setMemberRole} />
           ) : (
-            <RulesPage commonCats={commonCats} setCommonCats={setCommonCats} privateCats={privateCats} setPrivateCats={setPrivateCats} principles={principles} setPrinciples={setPrinciples} targetRuleName={targetRuleName} targetEditable={targetEditable} onTargetConsumed={() => { setTargetRuleName(null); setTargetEditable(false); }} onRulesModified={() => {}} showBack={backToQuality} onBack={backToQuality ? () => { setView("quality"); setBackToQuality(false); } : undefined} readOnly={!canEditRules(currentUser.role)}/>
+            <RulesPage commonCats={commonCats} setCommonCats={setCommonCats} privateCats={privateCats} setPrivateCats={setPrivateCats} principles={principles} setPrinciples={setPrinciples} targetRuleName={targetRuleName} targetEditable={targetEditable} onTargetConsumed={() => { setTargetRuleName(null); setTargetEditable(false); }} onRulesModified={() => {}} showBack={backToQuality} onBack={backToQuality ? () => { setView("quality"); setBackToQuality(false); } : undefined} readOnly={!canEditRules(currentUser.role)}
+              versions={versions} latestVersion={latestVersion} totalSeq={totalSeq} isDirty={isDirty} viewingVersionId={viewingVersionId} setViewingVersionId={setViewingVersionId} onSaveVersion={saveVersion} onDiscardChanges={discardChanges} onRestoreVersion={restoreVersion}/>
           )}
         </div>
       </section>
