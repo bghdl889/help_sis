@@ -22,15 +22,53 @@ import {
   AlertCircle,
   Pencil,
   ShieldCheck,
+  Inbox,
+  Award,
+  Send,
 } from "lucide-react";
 
 type Role = "agent" | "inspector" | "manager" | "admin";
 type AgentGroup = "一线客服" | "VIP一线客服" | "高潜客服" | "VIP客服";
 const AGENT_GROUPS: AgentGroup[] = ["一线客服", "VIP一线客服", "高潜客服", "VIP客服"];
 type Account = { name: string; password: string; role: Role; group?: AgentGroup };
-type View = "quality" | "rules" | "records" | "members";
+type View = "quality" | "rules" | "records" | "members" | "messages";
 const roleLabel = (r: Role) => r === "admin" ? "超级管理者" : r === "manager" ? "业务管理者" : r === "inspector" ? "质检人员" : "客服人员";
 const canEditRules = (r: Role) => r === "manager" || r === "admin";
+
+// 消息中心：客服申诉 / 申奖(自荐) / 优秀案例周报。纯内存演示。
+type MsgKind = "appeal" | "award" | "weekly";
+type MsgStatus = "pending" | "approved" | "rejected";
+type Vote = { by: string; result: "approve" | "reject"; at: string };
+type Message = {
+  id: string;
+  kind: MsgKind;
+  from: string;
+  to: string[];
+  complaintId?: string;
+  complaintTitle?: string;
+  body: string;
+  createdAt: string;
+  status: MsgStatus;
+  reply?: { by: string; text: string; at: string; result: "approved" | "rejected" };
+  votes?: Vote[];
+  readBy: string[];
+};
+type ExcellentCase = { id: string; complaintId: string; agent: string; title: string; summary: string; source: "inspector" | "award"; addedBy: string; addedAt: string };
+// 知识库：全局条目，可被专用规则的各评分维度引用。内容可为文本或外部链接。
+type KnowledgeItem = { id: string; title: string; kind: "text" | "link"; content: string };
+
+// 消息可见性：周报→全体（客服看下发、质检/管理者看已发出的）；申奖→全体质检/管理者+发起客服；申诉→发起客服+被抄送质检人员。
+function visibleMessages(messages: Message[], user: Account): Message[] {
+  const insp = user.role === "inspector" || user.role === "manager" || user.role === "admin";
+  return messages.filter(m => {
+    if (m.kind === "weekly") return true; // 周报全员可见
+    if (m.kind === "award") return insp || m.from === user.name;
+    return m.from === user.name || m.to.includes(user.name); // appeal
+  });
+}
+function unreadCount(messages: Message[], user: Account): number {
+  return visibleMessages(messages, user).filter(m => !m.readBy.includes(user.name)).length;
+}
 type ChatMsg = { from: "user" | "agent"; text: string; time: string };
 type AiIssue = { rule: string; score: string; quote: string };
 type AgentType = "AI客服" | "一线客服" | "VIP一线客服" | "高潜客服";
@@ -225,15 +263,28 @@ function PluginSidebar({
   view,
   setView,
   currentUser,
+  messages,
   onLogout,
 }: {
   view: View;
   setView: (view: View) => void;
   currentUser: Account;
+  messages: Message[];
   onLogout: () => void;
 }) {
   const isAgent = currentUser.role === "agent";
   const isAdmin = currentUser.role === "admin";
+  const unread = unreadCount(messages, currentUser);
+  const MsgBtn = (
+    <button
+      onClick={() => setView("messages")}
+      className={`relative mb-1 flex h-10 w-full items-center gap-2.5 rounded-md px-3 text-left text-[12px] transition ${view === "messages" ? "bg-[#4b7ff0] font-medium text-white shadow-sm" : "hover:bg-[#354454]"}`}
+    >
+      <Inbox className="size-4" />
+      消息
+      {unread > 0 && <span className="ml-auto grid min-w-4 place-items-center rounded-full bg-[#e0645f] px-1 text-[9px] font-semibold text-white">{unread}</span>}
+    </button>
+  );
   return (
     <aside className="flex w-[184px] shrink-0 flex-col bg-[#293542] px-3 py-4 text-[#c5ced8]">
       <div className="mb-7 flex items-center gap-2 px-2">
@@ -253,13 +304,16 @@ function PluginSidebar({
         工作台
       </div>
       {isAgent ? (
-        <button
-          onClick={() => setView("records")}
-          className={`flex h-10 items-center gap-2.5 rounded-md px-3 text-left text-[12px] transition ${view === "records" ? "bg-[#4b7ff0] font-medium text-white shadow-sm" : "hover:bg-[#354454]"}`}
-        >
-          <UserRound className="size-4" />
-          个人记录
-        </button>
+        <>
+          <button
+            onClick={() => setView("records")}
+            className={`mb-1 flex h-10 items-center gap-2.5 rounded-md px-3 text-left text-[12px] transition ${view === "records" ? "bg-[#4b7ff0] font-medium text-white shadow-sm" : "hover:bg-[#354454]"}`}
+          >
+            <UserRound className="size-4" />
+            个人记录
+          </button>
+          {MsgBtn}
+        </>
       ) : (
         <>
           <button
@@ -276,6 +330,7 @@ function PluginSidebar({
             <SlidersHorizontal className="size-4" />
             规则设置
           </button>
+          {MsgBtn}
           {isAdmin && (
             <button
               onClick={() => setView("members")}
@@ -305,7 +360,7 @@ function PluginSidebar({
   );
 }
 
-function QualityHome({ commonCats, privateCats, principles, complaints, aiVersion, currentRuleVersion, rerunTask, applyReport, reportApplied, openTaskName, setOpenTaskName, openComplaintId, setOpenComplaintId, reviews, setReviews, showReport, setShowReport, onGoToRuleView }: { commonCats: Cat[]; privateCats: Cat[]; principles: Principle[]; complaints: Complaint[]; aiVersion: number; currentRuleVersion: string; rerunTask: () => void; applyReport: () => void; reportApplied: boolean; openTaskName: string | null; setOpenTaskName: (name: string | null) => void; openComplaintId: string | null; setOpenComplaintId: (id: string | null) => void; reviews: Record<string, Review>; setReviews: React.Dispatch<React.SetStateAction<Record<string, Review>>>; showReport: boolean; setShowReport: (v: boolean) => void; onGoToRuleView: (name: string) => void }) {
+function QualityHome({ commonCats, privateCats, principles, complaints, aiVersion, currentRuleVersion, rerunTask, applyReport, reportApplied, openTaskName, setOpenTaskName, openComplaintId, setOpenComplaintId, reviews, setReviews, showReport, setShowReport, excellentCases, markExcellent, unmarkExcellent, onGoToRuleView }: { commonCats: Cat[]; privateCats: Cat[]; principles: Principle[]; complaints: Complaint[]; aiVersion: number; currentRuleVersion: string; rerunTask: () => void; applyReport: () => void; reportApplied: boolean; openTaskName: string | null; setOpenTaskName: (name: string | null) => void; openComplaintId: string | null; setOpenComplaintId: (id: string | null) => void; reviews: Record<string, Review>; setReviews: React.Dispatch<React.SetStateAction<Record<string, Review>>>; showReport: boolean; setShowReport: (v: boolean) => void; excellentCases: ExcellentCase[]; markExcellent: (c: Complaint) => void; unmarkExcellent: (complaintId: string) => void; onGoToRuleView: (name: string) => void }) {
   type TaskFilters = { date: string; rounds: string; limit: string; statuses: string[]; vipMin: string; vipMax: string; includeTags: string[]; excludeTags: string[]; agents: string[] };
   type TaskRow = { name: string; status: string; note: string; date: string; ruleVersion: string; filters?: TaskFilters };
   const [tasks, setTasks] = useState<TaskRow[]>([
@@ -395,6 +450,8 @@ function QualityHome({ commonCats, privateCats, principles, complaints, aiVersio
         review={reviews[openComplaint.id] ?? null}
         commonCats={commonCats}
         privateCats={privateCats}
+        isExcellent={excellentCases.some(e => e.complaintId === openComplaint.id)}
+        onToggleExcellent={(c) => excellentCases.some(e => e.complaintId === c.id) ? unmarkExcellent(c.id) : markExcellent(c)}
         onBack={() => setOpenComplaintId(null)}
         onSave={(r) => setReviews(prev => ({ ...prev, [openComplaint.id]: r }))}
         onGoToRule={onGoToRuleView}
@@ -1107,7 +1164,7 @@ function NewTaskModal({ onClose, onCreate }: { onClose: () => void; onCreate: (t
   );
 }
 
-function ConversationReview({ complaint, review, commonCats, privateCats, onBack, onSave, onGoToRule }: { complaint: Complaint; review: Review | null; commonCats: Cat[]; privateCats: Cat[]; onBack: () => void; onSave: (r: Review) => void; onGoToRule: (name: string) => void }) {
+function ConversationReview({ complaint, review, commonCats, privateCats, isExcellent, onToggleExcellent, onBack, onSave, onGoToRule }: { complaint: Complaint; review: Review | null; commonCats: Cat[]; privateCats: Cat[]; isExcellent: boolean; onToggleExcellent: (c: Complaint) => void; onBack: () => void; onSave: (r: Review) => void; onGoToRule: (name: string) => void }) {
   const involvedRules = Array.from(new Set(complaint.aiIssues.map(i => i.rule)));
   // 全部质检规则按门类分组（通用/专用），携带各维度扣分值，供人工检索标注实际扣分点。
   const ruleGroups = [
@@ -1338,6 +1395,16 @@ function ConversationReview({ complaint, review, commonCats, privateCats, onBack
                 <button onClick={startObjection} className="rounded-lg border border-[#d9e2ee] bg-white px-3 py-1.5 text-[10px] text-[#6b7a89] transition hover:bg-[#f2f5f9]">改为有异议</button>
               </div>
             )}
+            {/* 优秀案例：质检人员可在复审时评选，赞成即进入本周优秀案例池 */}
+            <div className="mt-3 flex items-center gap-2 border-t border-[#eef1f4] pt-3">
+              {isExcellent
+                ? <span className="mr-auto flex items-center gap-1.5 text-[10px] font-medium text-[#b9791d]"><Award className="size-3.5" />已入选本周优秀案例</span>
+                : <span className="mr-auto text-[10px] text-[#8b96a3]">认为这是一次优质服务？可评选为优秀案例</span>}
+              <button onClick={() => onToggleExcellent(complaint)}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-medium transition ${isExcellent ? "border border-[#e6d3a8] bg-white text-[#b9791d] hover:bg-[#fdf9f0]" : "bg-[#e59735] text-white hover:bg-[#d4882a]"}`}>
+                <Award className="size-3.5" />{isExcellent ? "取消优秀案例" : "评为优秀案例"}
+              </button>
+            </div>
             </div>
           </div>
 
@@ -1762,18 +1829,18 @@ function ReportView({ taskName, ruleVersion, complaints, reviews, aiVersion, com
 }
 
 type Dim = { title: string; score: string; standard: string; criteria: string };
-type Cat = { name: string; expanded: boolean; enabled: boolean; renaming: boolean; dimensions: Dim[] };
+type Cat = { name: string; expanded: boolean; enabled: boolean; renaming: boolean; dimensions: Dim[]; tags?: string[]; knowledgeIds?: string[] };
 type NewDimDraft = { title: string; score: string; standard: string; criteria: string };
 
 // —— 规则版本管理 ——
 const MAX_VERSIONS = 30;
 type RuleVersion = { id: string; seq: number; note: string; author: string; savedAt: string; commonCats: Cat[]; privateCats: Cat[]; principles: Principle[] };
-const stripCat = (c: Cat) => ({ name: c.name, enabled: c.enabled, dimensions: c.dimensions.map(d => ({ ...d })) });
+const stripCat = (c: Cat) => ({ name: c.name, enabled: c.enabled, dimensions: c.dimensions.map(d => ({ ...d })), tags: c.tags ? [...c.tags] : undefined, knowledgeIds: c.knowledgeIds ? [...c.knowledgeIds] : undefined });
 // 仅比较规则内容，忽略展开/重命名等 UI 状态。
 const rulesFingerprint = (common: Cat[], priv: Cat[], principles: Principle[]) =>
   JSON.stringify({ c: common.map(stripCat), p: priv.map(stripCat), r: principles });
 // 载入某版本内容为工作副本时，重置 UI 状态。
-const hydrateCat = (c: Cat): Cat => ({ name: c.name, enabled: c.enabled, expanded: false, renaming: false, dimensions: c.dimensions.map(d => ({ ...d })) });
+const hydrateCat = (c: Cat): Cat => ({ name: c.name, enabled: c.enabled, expanded: false, renaming: false, dimensions: c.dimensions.map(d => ({ ...d })), tags: c.tags ? [...c.tags] : undefined, knowledgeIds: c.knowledgeIds ? [...c.knowledgeIds] : undefined });
 const pad2 = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 const fmtVersionTime = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 
@@ -1787,6 +1854,8 @@ function RulesList({
   onTargetConsumed,
   onRulesModified,
   readOnly,
+  showTags,
+  knowledge,
 }: {
   label: string;
   sublabel: string;
@@ -1797,9 +1866,13 @@ function RulesList({
   onTargetConsumed?: () => void;
   onRulesModified?: () => void;
   readOnly?: boolean;
+  showTags?: boolean;
+  knowledge?: KnowledgeItem[];
 }) {
   const [menuOpenIdx, setMenuOpenIdx] = useState<number | null>(null);
   const [catNameDraft, setCatNameDraft] = useState("");
+  const [tagDrafts, setTagDrafts] = useState<Record<number, string>>({});
+  const [kbPickerIdx, setKbPickerIdx] = useState<number | null>(null);
   const [editingKey, setEditingKey] = useState<{ cat: number; dim: number } | null>(null);
   const [viewingKey, setViewingKey] = useState<{ cat: number; dim: number } | null>(null);
   const [dimDrafts, setDimDrafts] = useState<Record<string, Dim>>({});
@@ -1847,8 +1920,23 @@ function RulesList({
     onRulesModified?.();
   }
   function addCat() {
-    setCats(prev => [...prev, { name: "", expanded: false, enabled: true, renaming: true, dimensions: [] }]);
+    setCats(prev => [...prev, { name: "", expanded: false, enabled: true, renaming: true, dimensions: [], tags: showTags ? [] : undefined }]);
     setCatNameDraft("");
+  }
+  function addTag(catIdx: number, raw: string) {
+    const t = raw.trim();
+    if (!t) return;
+    setCats(prev => prev.map((c, i) => i !== catIdx ? c : { ...c, tags: (c.tags ?? []).includes(t) ? c.tags : [...(c.tags ?? []), t] }));
+    setTagDrafts(p => ({ ...p, [catIdx]: "" }));
+    onRulesModified?.();
+  }
+  function removeTag(catIdx: number, tag: string) {
+    setCats(prev => prev.map((c, i) => i !== catIdx ? c : { ...c, tags: (c.tags ?? []).filter(t => t !== tag) }));
+    onRulesModified?.();
+  }
+  function toggleKnowledge(catIdx: number, id: string) {
+    setCats(prev => prev.map((c, i) => i !== catIdx ? c : { ...c, knowledgeIds: (c.knowledgeIds ?? []).includes(id) ? c.knowledgeIds!.filter(x => x !== id) : [...(c.knowledgeIds ?? []), id] }));
+    onRulesModified?.();
   }
   function saveDim(catIdx: number, dimIdx: number, draft: Dim) {
     setCats(prev => prev.map((c, ci) => ci !== catIdx ? c : {
@@ -1936,6 +2024,87 @@ function RulesList({
           {/* 展开内容：二级维度 + 新增入口 */}
           {cat.expanded && (
             <div className="border-t border-[#eef1f4] bg-white">
+              {/* 适用标签：命中任一标签的客诉才套用本专用规则 */}
+              {showTags && (
+                <div className="border-b border-[#f2f4f7] px-5 py-3.5">
+                  <div className="mb-2 text-[10px] text-[#8b97a3]">适用标签 <span className="text-[#b0bbc8]">（至少保留一个；命中任一标签的客诉才套用本专用规则）</span></div>
+                  <div className={`flex flex-wrap items-center gap-1.5 rounded-lg border border-[#e4e9f0] px-2 py-2 ${readOnly ? "bg-[#fafbfc]" : "bg-white"}`}>
+                    {(cat.tags ?? []).map(tag => (
+                      <span key={tag} className="flex items-center gap-1 rounded-md bg-[#4b7ff0] py-1 pl-2.5 pr-1.5 text-[11px] font-medium text-white">
+                        {tag}
+                        {!readOnly && <button onClick={() => removeTag(catIdx, tag)} className="grid size-3.5 place-items-center rounded-full text-white/80 hover:bg-white/20"><X className="size-2.5"/></button>}
+                      </span>
+                    ))}
+                    {(cat.tags ?? []).length === 0 && readOnly && <span className="px-1 text-[11px] text-[#b0bbc8]">未设置适用标签</span>}
+                    {!readOnly && (
+                      <input
+                        value={tagDrafts[catIdx] ?? ""}
+                        onChange={e => setTagDrafts(p => ({ ...p, [catIdx]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addTag(catIdx, tagDrafts[catIdx] ?? ""); } }}
+                        onBlur={() => addTag(catIdx, tagDrafts[catIdx] ?? "")}
+                        placeholder="输入标签后回车添加…"
+                        className="h-6 min-w-[120px] flex-1 bg-transparent px-1 text-[11px] text-[#3e4a57] outline-none placeholder-[#b5bfc9]"
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+              {/* 门类级知识库：命中本门类标签的客诉，评分时加载以下知识作为参考 */}
+              {showTags && (
+                <div className="border-b border-[#f2f4f7] px-5 py-3.5">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-[10px] text-[#8b97a3]">知识库 <span className="text-[#b0bbc8]">（本门类下所有评分维度共享，评分时作为参考资料加载）</span></div>
+                    {!readOnly && (
+                      <div className="relative" onClick={e => e.stopPropagation()}>
+                        <button onClick={() => setKbPickerIdx(kbPickerIdx === catIdx ? null : catIdx)}
+                          className="flex h-6 items-center gap-1 rounded border border-[#d5e0f5] bg-[#eaf2ff] px-2 text-[10px] text-[#4b7ff0] hover:bg-[#daeaff]">
+                          <Plus className="size-3"/>挂载知识
+                        </button>
+                        {kbPickerIdx === catIdx && (
+                          <div className="absolute right-0 top-7 z-30 w-[260px] overflow-hidden rounded-lg border border-[#dde5ee] bg-white shadow-[0_12px_32px_rgba(41,53,66,.18)]">
+                            <div className="border-b border-[#eef1f4] px-3 py-2 text-[10px] font-semibold text-[#374350]">选择知识条目</div>
+                            <div className="max-h-[220px] overflow-auto py-1">
+                              {(knowledge ?? []).length === 0 && <div className="px-3 py-4 text-center text-[10px] text-[#b0bbc8]">知识库为空，请先在「知识库」页新建</div>}
+                              {(knowledge ?? []).map(k => {
+                                const on = (cat.knowledgeIds ?? []).includes(k.id);
+                                return (
+                                  <button key={k.id} onClick={() => toggleKnowledge(catIdx, k.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[#f4f7fb]">
+                                    <span className={`grid size-3.5 shrink-0 place-items-center rounded border ${on ? "border-[#4b7ff0] bg-[#4b7ff0] text-white" : "border-[#c9d2dc] bg-white"}`}>{on && <Check className="size-2.5"/>}</span>
+                                    <span className={`shrink-0 rounded px-1 py-0.5 text-[8px] font-medium ${k.kind === "link" ? "bg-[#eef4ff] text-[#4b7ff0]" : "bg-[#eef7f1] text-[#27955d]"}`}>{k.kind === "link" ? "链接" : "文本"}</span>
+                                    <span className="truncate text-[10px] text-[#465260]">{k.title}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="border-t border-[#eef1f4] bg-[#fafbfc] px-3 py-1.5 text-right">
+                              <button onClick={() => setKbPickerIdx(null)} className="rounded bg-[#4b7ff0] px-2.5 py-1 text-[9px] font-medium text-white hover:bg-[#3d6fe0]">完成</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {(cat.knowledgeIds ?? []).length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-[#e4e9f0] px-3 py-2.5 text-[10px] text-[#b0bbc8]">{readOnly ? "未挂载知识库" : "尚未挂载知识库，点击右侧「挂载知识」引用"}</div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(cat.knowledgeIds ?? []).map(id => {
+                        const k = (knowledge ?? []).find(x => x.id === id);
+                        if (!k) return null;
+                        return (
+                          <span key={id} className="flex items-center gap-1.5 rounded-md bg-[#f2f6fc] py-1 pl-2 pr-1.5 text-[10px] text-[#3e4c5a] ring-1 ring-inset ring-[#e0e8f2]">
+                            <span className={`rounded px-1 py-0.5 text-[8px] font-medium ${k.kind === "link" ? "bg-[#eef4ff] text-[#4b7ff0]" : "bg-[#eef7f1] text-[#27955d]"}`}>{k.kind === "link" ? "链接" : "文本"}</span>
+                            {k.kind === "link"
+                              ? <a href={k.content} target="_blank" rel="noreferrer" className="max-w-[160px] truncate font-medium text-[#4b7ff0] hover:underline" onClick={e => e.stopPropagation()}>{k.title}</a>
+                              : <span className="max-w-[160px] truncate font-medium">{k.title}</span>}
+                            {!readOnly && <button onClick={() => toggleKnowledge(catIdx, id)} className="grid size-3.5 place-items-center rounded-full text-[#8b97a3] hover:bg-[#dfe4ea]"><X className="size-2.5"/></button>}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
               {/* 现有二级维度 */}
               {cat.dimensions.map((dim, dimIdx) => {
                 const key = `${catIdx}-${dimIdx}`;
@@ -2162,10 +2331,95 @@ function PrinciplesList({ principles, setPrinciples, readOnly }: { principles: P
   );
 }
 
-function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, principles, setPrinciples, targetRuleName, targetEditable, onTargetConsumed, onRulesModified, showBack, onBack, readOnly, versions, latestVersion, totalSeq, isDirty, viewingVersionId, setViewingVersionId, onSaveVersion, onDiscardChanges, onRestoreVersion }: {
+function KnowledgeLibrary({ knowledge, onAdd, onUpdate, onDelete, readOnly }: { knowledge: KnowledgeItem[]; onAdd: (item: Omit<KnowledgeItem, "id">) => void; onUpdate: (id: string, patch: Partial<Omit<KnowledgeItem, "id">>) => void; onDelete: (id: string) => void; readOnly?: boolean }) {
+  const empty: Omit<KnowledgeItem, "id"> = { title: "", kind: "text", content: "" };
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Omit<KnowledgeItem, "id">>(empty);
+  const [adding, setAdding] = useState(false);
+
+  function startAdd() { setDraft(empty); setAdding(true); setEditingId(null); }
+  function startEdit(k: KnowledgeItem) { setDraft({ title: k.title, kind: k.kind, content: k.content }); setEditingId(k.id); setAdding(false); }
+  function saveAdd() { if (!draft.title.trim() || !draft.content.trim()) return; onAdd({ title: draft.title.trim(), kind: draft.kind, content: draft.content.trim() }); setAdding(false); setDraft(empty); }
+  function saveEdit(id: string) { if (!draft.title.trim() || !draft.content.trim()) return; onUpdate(id, { title: draft.title.trim(), kind: draft.kind, content: draft.content.trim() }); setEditingId(null); }
+
+  const Form = ({ onSave, onCancel, isNew }: { onSave: () => void; onCancel: () => void; isNew: boolean }) => (
+    <div className="rounded-md border border-[#dfe7f4] bg-[#f8fbff] p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[11px] font-medium text-[#496078]">{isNew ? "新增知识条目" : "编辑知识条目"}</span>
+        <div className="flex gap-2">
+          <button onClick={onSave} disabled={!draft.title.trim() || !draft.content.trim()} className="rounded bg-[#4b7ff0] px-2 py-0.5 text-[10px] text-white disabled:opacity-40">保存</button>
+          <button onClick={onCancel} className="text-[10px] text-[#8b97a3]">取消</button>
+        </div>
+      </div>
+      <div className="grid grid-cols-[70px_1fr] gap-x-3 gap-y-2 text-[10px]">
+        <span className="pt-1 text-[#8794a0]">标题 <span className="text-[#e59735]">*</span></span>
+        <input value={draft.title} onChange={e => setDraft(d => ({ ...d, title: e.target.value }))} placeholder="如：精准答疑标准话术" className="h-6 rounded border border-[#dbe3ee] bg-white px-2 text-[10px] outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"/>
+        <span className="pt-1 text-[#8794a0]">类型</span>
+        <div className="flex gap-1.5">
+          {(["text", "link"] as const).map(k => (
+            <button key={k} onClick={() => setDraft(d => ({ ...d, kind: k }))} className={`rounded px-2.5 py-1 text-[10px] font-medium transition ${draft.kind === k ? "bg-[#4b7ff0] text-white" : "bg-white text-[#6b7a89] ring-1 ring-inset ring-[#dbe3ee] hover:bg-[#f2f5f9]"}`}>{k === "text" ? "文本" : "链接"}</button>
+          ))}
+        </div>
+        <span className="pt-1 text-[#8794a0]">{draft.kind === "text" ? "内容" : "链接"} <span className="text-[#e59735]">*</span></span>
+        {draft.kind === "text"
+          ? <textarea value={draft.content} onChange={e => setDraft(d => ({ ...d, content: e.target.value }))} rows={3} placeholder="填写知识内容，供质检评分参考…" className="resize-none rounded border border-[#dbe3ee] bg-white px-2 py-1 text-[10px] leading-4 outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"/>
+          : <input value={draft.content} onChange={e => setDraft(d => ({ ...d, content: e.target.value }))} placeholder="https://…" className="h-6 rounded border border-[#dbe3ee] bg-white px-2 text-[10px] outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"/>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="rounded-lg border border-[#e1e5e9] bg-white">
+      <div className="flex items-center justify-between border-b border-[#e8ecf0] px-4 py-3">
+        <div>
+          <div className="text-[12px] font-semibold text-[#35414e]">知识库</div>
+          <div className="mt-0.5 text-[10px] text-[#909ba6]">沉淀口径、话术、FAQ 与外部文档，供专用规则的评分维度引用</div>
+        </div>
+        {!readOnly && (
+          <button onClick={startAdd} className="flex h-7 items-center gap-1 rounded border border-[#d5e0f5] bg-[#eaf2ff] px-2.5 text-[11px] text-[#4b7ff0] hover:bg-[#daeaff]">
+            <Plus className="size-3.5"/>添加
+          </button>
+        )}
+      </div>
+
+      {knowledge.length === 0 && !adding && (
+        <div className="px-4 py-8 text-center text-[11px] text-[#b0bbc8]">暂无知识条目，点击右上角「添加」新建</div>
+      )}
+
+      {knowledge.map(k => (
+        <div key={k.id} className="border-b border-[#eef1f4] px-4 py-3 last:border-b-0">
+          {editingId === k.id ? (
+            <Form isNew={false} onSave={() => saveEdit(k.id)} onCancel={() => setEditingId(null)} />
+          ) : (
+            <div className="flex items-start gap-3">
+              <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium ${k.kind === "link" ? "bg-[#eef4ff] text-[#4b7ff0]" : "bg-[#eef7f1] text-[#27955d]"}`}>{k.kind === "link" ? "链接" : "文本"}</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-medium text-[#465260]">{k.title}</div>
+                {k.kind === "link"
+                  ? <a href={k.content} target="_blank" rel="noreferrer" className="mt-0.5 block truncate text-[10px] text-[#4b7ff0] hover:underline">{k.content}</a>
+                  : <div className="mt-0.5 text-[10px] leading-relaxed text-[#7a8794]">{k.content}</div>}
+              </div>
+              {!readOnly && (
+                <div className="flex shrink-0 gap-2">
+                  <button onClick={() => startEdit(k)} className="text-[10px] text-[#778695] hover:text-[#4b7ff0]">修改</button>
+                  <button onClick={() => onDelete(k.id)} className="text-[10px] text-[#b0bbc8] hover:text-[#d75d5d]">删除</button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+
+      {adding && <div className="p-3"><Form isNew onSave={saveAdd} onCancel={() => { setAdding(false); setDraft(empty); }} /></div>}
+    </div>
+  );
+}
+
+function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, principles, setPrinciples, knowledge, onAddKnowledge, onUpdateKnowledge, onDeleteKnowledge, targetRuleName, targetEditable, onTargetConsumed, onRulesModified, showBack, onBack, readOnly, versions, latestVersion, totalSeq, isDirty, viewingVersionId, setViewingVersionId, onSaveVersion, onDiscardChanges, onRestoreVersion }: {
   commonCats: Cat[]; setCommonCats: React.Dispatch<React.SetStateAction<Cat[]>>;
   privateCats: Cat[]; setPrivateCats: React.Dispatch<React.SetStateAction<Cat[]>>;
   principles: Principle[]; setPrinciples: React.Dispatch<React.SetStateAction<Principle[]>>;
+  knowledge: KnowledgeItem[]; onAddKnowledge: (item: Omit<KnowledgeItem, "id">) => void; onUpdateKnowledge: (id: string, patch: Partial<Omit<KnowledgeItem, "id">>) => void; onDeleteKnowledge: (id: string) => void;
   targetRuleName: string | null; targetEditable: boolean; onTargetConsumed: () => void;
   onRulesModified: () => void;
   showBack?: boolean;
@@ -2177,7 +2431,7 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, pri
 }) {
   const inCommon = targetRuleName ? commonCats.some(c => c.dimensions.some(d => d.title === targetRuleName)) : false;
   const inPrivate = targetRuleName ? privateCats.some(c => c.dimensions.some(d => d.title === targetRuleName)) : false;
-  const [tab, setTab] = useState<"common" | "private" | "principle">("common");
+  const [tab, setTab] = useState<"common" | "private" | "principle" | "knowledge">("common");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveNote, setSaveNote] = useState("");
@@ -2304,11 +2558,14 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, pri
           <button onClick={() => setTab("principle")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "principle" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>评分原则</button>
           <button onClick={() => setTab("common")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "common" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>通用质检规则列表</button>
           <button onClick={() => setTab("private")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "private" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>专用质检规则列表</button>
+          <button onClick={() => setTab("knowledge")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "knowledge" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>知识库</button>
         </div>
         {tab === "common" ? (
           <RulesList label="通用规则" sublabel="适用于全部客服会话的基础质检要求" cats={shownCommon} setCats={isPreview ? setPreviewCommon : setCommonCats} targetRuleName={tab === "common" && !isPreview ? targetRuleName : null} targetEditable={targetEditable} onTargetConsumed={onTargetConsumed} onRulesModified={onRulesModified} readOnly={!canEdit}/>
         ) : tab === "private" ? (
-          <RulesList label="专用规则" sublabel="仅对指定业务线、活动或场景生效" cats={shownPrivate} setCats={isPreview ? setPreviewPrivate : setPrivateCats} targetRuleName={tab === "private" && !isPreview ? targetRuleName : null} targetEditable={targetEditable} onTargetConsumed={onTargetConsumed} onRulesModified={onRulesModified} readOnly={!canEdit}/>
+          <RulesList label="专用规则" sublabel="仅对指定业务线、活动或场景生效" showTags knowledge={knowledge} cats={shownPrivate} setCats={isPreview ? setPreviewPrivate : setPrivateCats} targetRuleName={tab === "private" && !isPreview ? targetRuleName : null} targetEditable={targetEditable} onTargetConsumed={onTargetConsumed} onRulesModified={onRulesModified} readOnly={!canEdit}/>
+        ) : tab === "knowledge" ? (
+          <KnowledgeLibrary knowledge={knowledge} onAdd={onAddKnowledge} onUpdate={onUpdateKnowledge} onDelete={onDeleteKnowledge} readOnly={!canEdit} />
         ) : (
           <PrinciplesList principles={shownPrinciples} setPrinciples={setPrinciples} readOnly={!canEdit}/>
         )}
@@ -2356,7 +2613,7 @@ const AGENT_RECORDS: AgentRecord[] = [
   {
     id: "r1", complaintId: "GD20241009-0087", date: "2024-10-09",
     user: "大有可为双鱼座", aiScore: 95, finalScore: 95, agreed: true,
-    reviewer: "张敏", reviewerTitle: "质检人员", reviewedAt: "2024-10-10 09:18",
+    reviewer: "王哲", reviewerTitle: "质检人员", reviewedAt: "2024-10-10 09:18",
     aiIssues: [],
     finalOpinion: "认可 AI 评分。应答准确、主动截图指引，玩家一次即解决，表现优秀，维持满分区间。",
     chat: [
@@ -2368,7 +2625,7 @@ const AGENT_RECORDS: AgentRecord[] = [
   {
     id: "r2", complaintId: "GD20241009-0142", date: "2024-10-09",
     user: "用户01363539162", aiScore: 88, finalScore: 96, agreed: false,
-    reviewer: "张敏", reviewerTitle: "质检人员", reviewedAt: "2024-10-10 09:25",
+    reviewer: "王哲", reviewerTitle: "质检人员", reviewedAt: "2024-10-10 09:25",
     aiIssues: [
       { rule: "缺乏耐心", score: "-2", quote: "「您已经问过了，规则页面都写着呢。」" },
       { rule: "答疑不清", score: "-10", quote: "「规则页面都写着呢，您再仔细看看。」" },
@@ -2385,7 +2642,7 @@ const AGENT_RECORDS: AgentRecord[] = [
   {
     id: "r3", complaintId: "GD20241007-0231", date: "2024-10-07",
     user: "机械鲨富大傻俏", aiScore: 74, finalScore: 68, agreed: false,
-    reviewer: "李伟", reviewerTitle: "业务管理者", reviewedAt: "2024-10-08 15:36",
+    reviewer: "李浩", reviewerTitle: "质检人员", reviewedAt: "2024-10-08 15:36",
     aiIssues: [
       { rule: "安抚不到位", score: "-2", quote: "「这是系统问题，我这边无法处理。」" },
     ],
@@ -2398,8 +2655,11 @@ const AGENT_RECORDS: AgentRecord[] = [
   },
 ];
 
-function AgentRecords({ currentUser }: { currentUser: Account }) {
+function AgentRecords({ currentUser, onAppeal, onAward }: { currentUser: Account; onAppeal: (rec: AgentRecord, reason: string) => void; onAward: (rec: AgentRecord, reason: string) => void }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const [actionMode, setActionMode] = useState<"appeal" | "award" | null>(null);
+  const [actionText, setActionText] = useState("");
+  const [actionDone, setActionDone] = useState<"appeal" | "award" | null>(null);
   const records = AGENT_RECORDS;
   const openRec = openId ? records.find(r => r.id === openId) ?? null : null;
 
@@ -2417,7 +2677,7 @@ function AgentRecords({ currentUser }: { currentUser: Account }) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#f7f8fa]">
         <header className="flex h-[58px] items-center gap-3 border-b border-[#e2e6eb] bg-white px-5">
-          <button onClick={() => setOpenId(null)} className="flex items-center gap-1 rounded-md border border-[#d9e2ee] bg-white px-2.5 py-1.5 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
+          <button onClick={() => { setOpenId(null); setActionMode(null); setActionText(""); setActionDone(null); }} className="flex items-center gap-1 rounded-md border border-[#d9e2ee] bg-white px-2.5 py-1.5 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
             <ChevronRight className="size-3 rotate-180" />返回
           </button>
           <div>
@@ -2454,6 +2714,37 @@ function AgentRecords({ currentUser }: { currentUser: Account }) {
                 </div>
                 <div className="text-[11px] leading-relaxed text-[#4d5966]">{openRec.finalOpinion}</div>
               </div>
+            </div>
+
+            {/* 申诉 / 申奖：对复审结论提出异议或自荐为优秀案例 */}
+            <div className="rounded-lg border border-[#e6ebf1] bg-white p-4">
+              {actionDone ? (
+                <div className="flex items-center gap-2 rounded-md bg-[#eef8f2] px-3 py-2.5 text-[11px] text-[#27955d]">
+                  <Check className="size-4 shrink-0" />
+                  {actionDone === "appeal" ? "申诉已提交，抄送给复审你的质检人员，可在「消息」中查看处理进展。" : "自荐已提交，抄送全体质检人员投票，可在「消息」中查看投票进展。"}
+                </div>
+              ) : actionMode ? (
+                <div>
+                  <div className="mb-1.5 text-[11px] font-semibold text-[#35414e]">{actionMode === "appeal" ? "申诉：对本次复审结论提出异议" : "申奖：自荐本条客诉为优秀案例"}</div>
+                  <textarea value={actionText} onChange={e => setActionText(e.target.value)} rows={3}
+                    placeholder={actionMode === "appeal" ? "请说明申诉理由（将抄送复审你的质检人员）" : "请说明自荐理由（将抄送全体质检人员投票）"}
+                    className="w-full resize-none rounded-md border border-[#dbe3ee] bg-white px-3 py-2 text-[11px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]" />
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button onClick={() => { setActionMode(null); setActionText(""); }}
+                      className="rounded-lg border border-[#dbe3ee] bg-white px-3 py-1.5 text-[10px] text-[#6b7a89] transition hover:bg-[#f2f5f9]">取消</button>
+                    <button onClick={() => { const t = actionText.trim(); if (!t) return; (actionMode === "appeal" ? onAppeal : onAward)(openRec, t); setActionDone(actionMode); setActionMode(null); setActionText(""); }}
+                      className="rounded-lg bg-[#4b7ff0] px-3 py-1.5 text-[10px] font-medium text-white transition hover:bg-[#3d6fe0]">提交{actionMode === "appeal" ? "申诉" : "自荐"}</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <p className="mr-auto text-[10px] text-[#8b96a3]">对这次复审结果有异议，或认为值得成为优秀案例？</p>
+                  <button onClick={() => setActionMode("appeal")}
+                    className="flex items-center gap-1.5 rounded-lg border border-[#e6c4c4] bg-white px-3 py-1.5 text-[11px] font-medium text-[#c9645f] transition hover:bg-[#fdf6f6]"><AlertCircle className="size-3.5" />申诉</button>
+                  <button onClick={() => setActionMode("award")}
+                    className="flex items-center gap-1.5 rounded-lg border border-[#e6d3a8] bg-white px-3 py-1.5 text-[11px] font-medium text-[#b9791d] transition hover:bg-[#fdf9f0]"><Award className="size-3.5" />申奖（自荐）</button>
+                </div>
+              )}
             </div>
 
             {/* AI 初评（弱化、参考） */}
@@ -2531,7 +2822,7 @@ function AgentRecords({ currentUser }: { currentUser: Account }) {
                   <span>客诉编号</span><span>玩家</span><span>质检员</span><span>得分</span><span></span>
                 </div>
                 {g.items.map(r => (
-                  <button key={r.id} onClick={() => setOpenId(r.id)}
+                  <button key={r.id} onClick={() => { setOpenId(r.id); setActionMode(null); setActionText(""); setActionDone(null); }}
                     className="grid w-full grid-cols-[1.4fr_1.1fr_1fr_.6fr_40px] items-center border-t border-[#edf0f3] px-4 py-2.5 text-left text-[11px] transition hover:bg-[#f8fbff]">
                     <span className="truncate font-medium text-[#465260]">{r.complaintId}</span>
                     <span className="truncate text-[10px] text-[#758291]">{r.user}</span>
@@ -2547,6 +2838,137 @@ function AgentRecords({ currentUser }: { currentUser: Account }) {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function MessagesView({ currentUser, accounts, messages, excellentCases, onReplyAppeal, onVoteAward, onSendWeekly, onRead }: {
+  currentUser: Account;
+  accounts: Account[];
+  messages: Message[];
+  excellentCases: ExcellentCase[];
+  onReplyAppeal: (id: string, result: "approved" | "rejected", text: string) => void;
+  onVoteAward: (id: string, result: "approve" | "reject") => void;
+  onSendWeekly: () => void;
+  onRead: (user: Account) => void;
+}) {
+  const isInspector = currentUser.role !== "agent";
+  const isAdmin = currentUser.role === "admin";
+  const [filter, setFilter] = useState<"all" | MsgKind>("all");
+  const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
+  useEffect(() => { onRead(currentUser); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const threshold = Math.max(1, Math.floor(accounts.filter(a => a.role === "inspector" || a.role === "manager").length / 2) + 1);
+  const list = visibleMessages(messages, currentUser)
+    .filter(m => filter === "all" || m.kind === filter)
+    .slice().reverse();
+
+  const kindMeta: Record<MsgKind, { label: string; cls: string; icon: React.ReactNode }> = {
+    appeal: { label: "申诉", cls: "bg-[#fdf0ef] text-[#d75d5d]", icon: <AlertCircle className="size-3" /> },
+    award: { label: "申奖", cls: "bg-[#fdf6e8] text-[#b9791d]", icon: <Award className="size-3" /> },
+    weekly: { label: "优秀案例周报", cls: "bg-[#eaf7f0] text-[#27955d]", icon: <Sparkles className="size-3" /> },
+  };
+  const tabs: { key: "all" | MsgKind; label: string }[] = [
+    { key: "all", label: "全部" }, { key: "appeal", label: "申诉" }, { key: "award", label: "申奖" }, { key: "weekly", label: "周报" },
+  ];
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#f7f8fa]">
+      <header className="flex h-[58px] items-center justify-between border-b border-[#e2e6eb] bg-white px-5">
+        <div>
+          <h1 className="text-[15px] font-semibold text-[#2f3b48]">消息</h1>
+          <p className="mt-0.5 text-[10px] text-[#8b96a3]">{isInspector ? "处理客服申诉与自荐投票，评选并下发优秀案例" : "查看申诉/申奖进展与每周优秀案例"}</p>
+        </div>
+        {isAdmin && (
+          <button onClick={onSendWeekly} disabled={excellentCases.length === 0}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-medium transition ${excellentCases.length === 0 ? "cursor-not-allowed bg-[#eef1f5] text-[#b0bbc8]" : "bg-[#4c9e78] text-white hover:bg-[#44916d]"}`}>
+            <Send className="size-3.5" />发送本周优秀案例（{excellentCases.length}）
+          </button>
+        )}
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-auto p-5">
+        <div className="mx-auto max-w-[720px]">
+          <div className="mb-4 flex gap-1.5">
+            {tabs.map(t => (
+              <button key={t.key} onClick={() => setFilter(t.key)}
+                className={`rounded-full px-3 py-1 text-[11px] font-medium transition ${filter === t.key ? "bg-[#4b7ff0] text-white shadow-sm" : "bg-white text-[#6b7a89] hover:bg-[#eef2f7]"}`}>{t.label}</button>
+            ))}
+          </div>
+
+          {list.length === 0 ? (
+            <div className="rounded-lg border border-[#e1e6eb] bg-white px-4 py-10 text-center text-[11px] text-[#b0bbc8]">暂无消息</div>
+          ) : (
+            <div className="space-y-3">
+              {list.map(m => {
+                const meta = kindMeta[m.kind];
+                const approve = (m.votes ?? []).filter(v => v.result === "approve").length;
+                const reject = (m.votes ?? []).filter(v => v.result === "reject").length;
+                const myVote = (m.votes ?? []).find(v => v.by === currentUser.name);
+                const canHandleAppeal = m.kind === "appeal" && isInspector && m.to.includes(currentUser.name) && !m.reply;
+                const canVote = m.kind === "award" && isInspector && m.status === "pending" && !myVote;
+                return (
+                  <div key={m.id} className="overflow-hidden rounded-xl border border-[#e6ebf1] bg-white shadow-[0_1px_3px_rgba(41,53,66,.04)]">
+                    <div className="flex items-center gap-2 border-b border-[#f0f3f7] px-4 py-2.5">
+                      <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${meta.cls}`}>{meta.icon}{meta.label}</span>
+                      {m.kind !== "weekly" && <span className="text-[11px] font-medium text-[#465260]">{m.from}</span>}
+                      {m.complaintTitle && <span className="text-[10px] text-[#8b97a3]">· {m.complaintTitle}（{m.complaintId}）</span>}
+                      <span className="ml-auto text-[10px] text-[#a8b2be]">{m.createdAt}</span>
+                    </div>
+                    <div className="px-4 py-3">
+                      <p className="whitespace-pre-line text-[12px] leading-relaxed text-[#4d5966]">{m.body}</p>
+
+                      {/* 申诉：结论 / 处理入口 */}
+                      {m.kind === "appeal" && m.reply && (
+                        <div className={`mt-3 rounded-lg px-3 py-2.5 ${m.reply.result === "approved" ? "bg-[#eef8f2]" : "bg-[#fdf0ef]"}`}>
+                          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold">
+                            <span className={m.reply.result === "approved" ? "text-[#27955d]" : "text-[#d75d5d]"}>{m.reply.result === "approved" ? "申诉通过" : "申诉驳回"}</span>
+                            <span className="font-normal text-[#9aa4b0]">· {m.reply.by} · {m.reply.at}</span>
+                          </div>
+                          <p className="text-[11px] leading-relaxed text-[#4d5966]">{m.reply.text}</p>
+                        </div>
+                      )}
+                      {canHandleAppeal && (
+                        <div className="mt-3 border-t border-[#f0f3f7] pt-3">
+                          <textarea value={replyDraft[m.id] ?? ""} onChange={e => setReplyDraft(p => ({ ...p, [m.id]: e.target.value }))}
+                            placeholder="填写处理说明（客服将看到）" rows={2}
+                            className="w-full resize-none rounded-md border border-[#dbe3ee] bg-white px-2.5 py-2 text-[11px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]" />
+                          <div className="mt-2 flex justify-end gap-2">
+                            <button onClick={() => onReplyAppeal(m.id, "rejected", (replyDraft[m.id] ?? "").trim() || "驳回申诉，维持原复审结论。")}
+                              className="rounded-lg border border-[#e6c4c4] bg-white px-3 py-1.5 text-[10px] font-medium text-[#c9645f] transition hover:bg-[#fdf6f6]">驳回</button>
+                            <button onClick={() => onReplyAppeal(m.id, "approved", (replyDraft[m.id] ?? "").trim() || "申诉成立，将复核该客诉评分。")}
+                              className="rounded-lg bg-[#4c9e78] px-3 py-1.5 text-[10px] font-medium text-white transition hover:bg-[#44916d]">通过</button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 申奖：投票进度 / 投票入口 */}
+                      {m.kind === "award" && (
+                        <div className="mt-3 border-t border-[#f0f3f7] pt-3">
+                          <div className="flex items-center gap-2 text-[10px] text-[#8b97a3]">
+                            <span>赞成 <span className="font-semibold text-[#27955d]">{approve}</span> / 需 {threshold}</span>
+                            {reject > 0 && <span>· 反对 {reject}</span>}
+                            {m.status === "approved" && <span className="ml-auto flex items-center gap-1 rounded-full bg-[#eaf7f0] px-2 py-0.5 font-medium text-[#27955d]"><Check className="size-3" />已入选优秀案例</span>}
+                            {m.status === "pending" && myVote && <span className="ml-auto text-[#a8b2be]">你已投票（{myVote.result === "approve" ? "赞成" : "反对"}）</span>}
+                          </div>
+                          {canVote && (
+                            <div className="mt-2 flex justify-end gap-2">
+                              <button onClick={() => onVoteAward(m.id, "reject")}
+                                className="rounded-lg border border-[#dbe3ee] bg-white px-3 py-1.5 text-[10px] font-medium text-[#6b7a89] transition hover:bg-[#f2f5f9]">反对</button>
+                              <button onClick={() => onVoteAward(m.id, "approve")}
+                                className="flex items-center gap-1 rounded-lg bg-[#4b7ff0] px-3 py-1.5 text-[10px] font-medium text-white transition hover:bg-[#3d6fe0]"><ThumbsUp className="size-3" />赞成</button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -2759,6 +3181,30 @@ function AuthScreen({
   );
 }
 
+// 知识库演示种子：可在「规则设置 → 知识库」维护，专用规则的评分维度可引用。
+const SEED_KNOWLEDGE: KnowledgeItem[] = [
+  { id: "k1", title: "活动规则总览", kind: "link", content: "https://wiki.internal/gamedocs/activity-rules" },
+  { id: "k2", title: "精准答疑标准话术", kind: "text", content: "先给结论再给依据；权限外如实告知并同步已提交工单/已记录，不复述文案敷衍。" },
+  { id: "k3", title: "充值到账处理流程", kind: "text", content: "核实订单号→查询到账状态→未到账则提交工单并告知处理时效，全程记录反馈。" },
+  { id: "k4", title: "常见活动 FAQ", kind: "link", content: "https://wiki.internal/gamedocs/faq" },
+];
+
+// 消息中心演示种子：登录质检账号即可看到一条待处理申诉与一条待投票申奖。
+const SEED_MESSAGES: Message[] = [
+  {
+    id: "m1", kind: "appeal", from: "李梦", to: ["王哲"],
+    complaintId: "GD20241007-0231", complaintTitle: "充值未到账客诉",
+    body: "复审下调到 68 分，我认为当时已建议玩家提交工单并记录了反馈，扣分偏重，申请复核。",
+    createdAt: "2024-10-11 09:20", status: "pending", readBy: [],
+  },
+  {
+    id: "m2", kind: "award", from: "李梦", to: ["刁丹", "刘滔", "李浩", "汪翔", "王丽君", "王哲", "王晨", "申慧", "罗晶晶", "阳尹新"],
+    complaintId: "GD20241009-0087", complaintTitle: "新手礼包指引",
+    body: "自荐本条客诉：主动截图标注领取路径，玩家一次即解决，希望作为优秀案例。",
+    createdAt: "2024-10-11 10:05", status: "pending", votes: [], readBy: [],
+  },
+];
+
 export default function App() {
   const [view, setView] = useState<View>("quality");
   const [closed, setClosed] = useState(false);
@@ -2787,6 +3233,11 @@ export default function App() {
   const [complaints, setComplaints] = useState<Complaint[]>(COMPLAINTS);
   const [aiVersion, setAiVersion] = useState(1);
   const [reportApplied, setReportApplied] = useState(false);
+  const [messages, setMessages] = useState<Message[]>(SEED_MESSAGES);
+  const [excellentCases, setExcellentCases] = useState<ExcellentCase[]>([]);
+  const [knowledge, setKnowledge] = useState<KnowledgeItem[]>(SEED_KNOWLEDGE);
+  const nextId = useRef(100);
+  const genId = () => `x${nextId.current++}`;
 
   function enter(acc: Account) {
     setCurrentUser(acc);
@@ -2816,6 +3267,9 @@ export default function App() {
     setComplaints(COMPLAINTS);
     setAiVersion(1);
     setReportApplied(false);
+    setMessages(SEED_MESSAGES);
+    setExcellentCases([]);
+    setKnowledge(SEED_KNOWLEDGE);
     setAuthView("login");
   }
   function goToRule(name: string, editable: boolean) {
@@ -2823,6 +3277,78 @@ export default function App() {
     setTargetEditable(editable);
     setBackToQuality(true);
     setView("rules");
+  }
+  // 需入选的赞成票数：质检人员总数（含管理者）的过半。
+  const inspectorNames = () => accounts.filter(a => a.role === "inspector" || a.role === "manager").map(a => a.name);
+  const awardThreshold = () => Math.max(1, Math.floor(inspectorNames().length / 2) + 1);
+  const nowStamp = "2024-10-11 11:00";
+
+  function sendMessage(m: Omit<Message, "id" | "createdAt" | "readBy">) {
+    setMessages(prev => [...prev, { ...m, id: genId(), createdAt: nowStamp, readBy: [m.from] }]);
+  }
+  // 质检人员处理申诉：写入结论并更新状态。
+  function replyAppeal(msgId: string, result: "approved" | "rejected", text: string) {
+    if (!currentUser) return;
+    setMessages(prev => prev.map(m => m.id === msgId
+      ? { ...m, status: result, reply: { by: currentUser.name, text, at: nowStamp, result }, readBy: [m.from] }
+      : m));
+  }
+  // 质检人员对申奖投票：同一人只计一票；赞成过半即入选优秀案例（source: award，去重）。
+  function voteAward(msgId: string, result: "approve" | "reject") {
+    if (!currentUser) return;
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId) return m;
+      const votes = [...(m.votes ?? []).filter(v => v.by !== currentUser.name), { by: currentUser.name, result, at: nowStamp }];
+      const approve = votes.filter(v => v.result === "approve").length;
+      const passed = approve >= awardThreshold();
+      if (passed && m.status !== "approved" && m.complaintId) {
+        setExcellentCases(ec => ec.some(e => e.complaintId === m.complaintId) ? ec
+          : [...ec, { id: genId(), complaintId: m.complaintId!, agent: m.from, title: m.complaintTitle ?? m.complaintId!, summary: m.body, source: "award", addedBy: "质检投票", addedAt: nowStamp }]);
+      }
+      return { ...m, votes, status: passed ? "approved" : m.status, readBy: [m.from] };
+    }));
+  }
+  // 复审时质检人员直接评为/取消优秀案例（source: inspector）。
+  function markExcellent(c: Complaint) {
+    setExcellentCases(prev => prev.some(e => e.complaintId === c.id) ? prev
+      : [...prev, { id: genId(), complaintId: c.id, agent: c.agent, title: `${c.agent} · 用户${c.user}`, summary: `AI 评分 ${c.score} 分，复审认定为优质服务案例。`, source: "inspector", addedBy: currentUser?.name ?? "质检", addedAt: nowStamp }]);
+  }
+  function unmarkExcellent(complaintId: string) {
+    setExcellentCases(prev => prev.filter(e => e.complaintId !== complaintId));
+  }
+  // 手动下发本周优秀案例：打包成一条周报群发全体客服，随后清空本周池。
+  function sendWeeklyDigest() {
+    if (excellentCases.length === 0) return;
+    const agentNames = accounts.filter(a => a.role === "agent").map(a => a.name);
+    const body = `本周共评选出 ${excellentCases.length} 个优秀客诉案例：\n` +
+      excellentCases.map((e, i) => `${i + 1}. ${e.agent}｜${e.title}——${e.summary}`).join("\n");
+    setMessages(prev => [...prev, {
+      id: genId(), kind: "weekly", from: currentUser?.name ?? "质检团队", to: agentNames,
+      body, createdAt: nowStamp, status: "approved", readBy: [currentUser?.name ?? ""],
+    }]);
+    setExcellentCases([]);
+  }
+  // 进入消息视图：把当前用户可见的消息标记为已读。
+  function markMessagesRead(user: Account) {
+    setMessages(prev => prev.map(m => {
+      const vis = m.kind === "weekly" ? true
+        : m.kind === "award" ? (user.role !== "agent" || m.from === user.name)
+        : (m.from === user.name || m.to.includes(user.name));
+      return vis && !m.readBy.includes(user.name) ? { ...m, readBy: [...m.readBy, user.name] } : m;
+    }));
+  }
+  // 知识库维护：新增/更新/删除。删除时同步从通用/专用规则的各维度引用中移除该条。
+  function addKnowledge(item: Omit<KnowledgeItem, "id">) {
+    setKnowledge(prev => [...prev, { ...item, id: genId() }]);
+  }
+  function updateKnowledge(id: string, patch: Partial<Omit<KnowledgeItem, "id">>) {
+    setKnowledge(prev => prev.map(k => k.id === id ? { ...k, ...patch } : k));
+  }
+  function deleteKnowledge(id: string) {
+    setKnowledge(prev => prev.filter(k => k.id !== id));
+    const dropRef = (cats: Cat[]) => cats.map(c => c.knowledgeIds?.includes(id) ? { ...c, knowledgeIds: c.knowledgeIds.filter(x => x !== id) } : c);
+    setCommonCats(dropRef);
+    setPrivateCats(dropRef);
   }
   // 重新运行任务：AI 采纳复审意见后重新评分——被判扣分不合理的规则不再扣分，
   // AI 自评分向质检人员建议分靠拢；同时保留质检人员的意见与分数。
@@ -2902,17 +3428,47 @@ export default function App() {
   const [commonCats, setCommonCats] = useState(initCommonCats);
   const initPrivateCats: Cat[] = [
     {
-      name: "活动/福利内容存疑",
+      name: "咨询类",
       expanded: false,
       enabled: true,
       renaming: false,
+      tags: ["咨询类", "活动/玩法咨询", "礼包/付费咨询", "游戏设置咨询", "免费福利/添加咨询"],
+      knowledgeIds: ["k1", "k2", "k4"],
       dimensions: [
-        {
-          title: "精准答疑",
-          score: "-5",
-          standard: "是否直接对应玩家的活动/福利具体疑问，结论清晰、不堆文案、不绕弯",
-          criteria: "不扣：直接命中疑问、结论明确，玩家无需追问；-2：答了核心但夹带无关文案/表述绕/需再追问一次；-5：只复述活动规则文案、模板话术敷衍、答非所问或对核心疑问无实质回应（触发核心封顶）。玩家提了活动/福利疑问必评，无不适用。",
-        },
+        { title: "精准答疑", score: "-5", standard: "是否直接对应玩家的活动/玩法/福利/游戏设置具体疑问，结论清晰、不堆文案、不绕弯", criteria: "不扣：直接命中疑问、结论明确，玩家无需追问；或已跟进/已提交工单/已查询告知/权限外如实告知；-2：答了核心但夹带无关文案/表述绕/需再追问一次；-5：只复述活动规则文案、模板话术敷衍、答非所问或对核心疑问完全无任何跟进与回应。" },
+        { title: "主动服务与延伸", score: "-2", standard: "是否主动查数据、给出与活动场景相关的延伸建议", criteria: "不扣：主动给出至少一条切实建议或主动查了数据；-2：有明显可延伸点（道具会过期、有更优兑换顺序）却未提醒，或可查数据却让玩家自己找，或该提供活动规则/发放记录截图帮理解却未提供致玩家没看懂。不适用：一次性规则确认、无后续动作可建议（标「无可延伸场景」）。" },
+        { title: "回复错误", score: "-3", standard: "对活动内容的事实性解答是否正确", criteria: "-3：对玩法、活动设置、渠道/版本区分、数据查询等作出事实性错误解答。与「精准答疑」区别：精准答疑是没答到点，回复错误是答了但答错。与「回复不全面」区别：说法本身正确但不完整/只引导玩家自行查看 → 归「回复不全面 -2」，不算回复错误；仅当所述内容与事实矛盾时才判本项。已查询并如实告知结果的，即便玩家不认可，也不算回复错误。" },
+        { title: "流程问题", score: "-3", standard: "是否符合本场景处理流程", criteria: "-3：处理流程错误或缺失。本场景多为直接答疑、无固定流程，多数情况标「本场景无流程要求」不扣。" },
+        { title: "回复不全面", score: "-2", standard: "活动细节与操作引导是否完整", criteria: "-2：活动细节解释不全面、未维护官方形象、漏答问题、该引导活动操作而未引导或引导不完整。不适用：疑问一两句即可讲清、无细节可补。" },
+      ],
+    },
+    {
+      name: "打不死鱼",
+      expanded: false,
+      enabled: true,
+      renaming: false,
+      tags: ["打不死鱼"],
+      dimensions: [
+        { title: "精准答疑", score: "-5", standard: "是否直接命中玩家疑问、结论明确", criteria: "不扣：直接命中疑问、结论明确，玩家无需追问；或已跟进/已提交工单/已查询告知/权限外如实告知；-2：答了核心但夹带无关文案/表述绕/需再追问一次；-5：只复述活动规则文案、模板话术敷衍、答非所问或对核心疑问完全无任何跟进与回应。" },
+        { title: "主动服务与延伸", score: "-2", standard: "是否主动给出建议或主动查数据", criteria: "不扣：主动给出至少一条切实建议或主动查了数据；-2：有明显可延伸点（道具会过期、有更优兑换顺序）却未提醒，或可查数据却让玩家自己找，或该提供活动规则/发放记录截图帮理解却未提供致玩家没看懂。不适用：一次性规则确认、无后续动作可建议（标「无可延伸场景」）。" },
+        { title: "回复错误", score: "-3", standard: "事实性解答是否正确", criteria: "-3：对玩法、活动设置、渠道/版本区分、数据查询等作出事实性错误解答。与「精准答疑」区别：精准答疑是没答到点，回复错误是答了但答错。与「回复不全面」区别：说法本身正确但不完整/只引导玩家自行查看 → 归「回复不全面 -2」，不算回复错误；仅当所述内容与事实矛盾时才判本项。已查询并如实告知结果的，即便玩家不认可，也不算回复错误。" },
+        { title: "流程问题", score: "-3", standard: "是否符合本场景处理流程", criteria: "-3：处理流程错误或缺失。本场景多为直接答疑、无固定流程，多数情况标「本场景无流程要求」不扣。" },
+        { title: "回复不全面", score: "-2", standard: "细节解释与操作引导是否完整", criteria: "-2：活动细节解释不全面、未维护官方形象、漏答问题、该引导活动操作而未引导或引导不完整。不适用：疑问一两句即可讲清、无细节可补。" },
+      ],
+    },
+    {
+      name: "充值类",
+      expanded: false,
+      enabled: true,
+      renaming: false,
+      tags: ["充值类", "付费咨询"],
+      knowledgeIds: ["k3"],
+      dimensions: [
+        { title: "精准答疑", score: "-5", standard: "是否直接命中充值相关疑问、结论明确", criteria: "不扣：直接命中疑问、结论明确，玩家无需追问；或已跟进/已提交工单/已查询告知/权限外如实告知；-2：答了核心但夹带无关文案/表述绕/需再追问一次；-5：只复述文案、模板话术敷衍、答非所问或对核心疑问完全无任何跟进与回应。" },
+        { title: "主动服务与延伸", score: "-2", standard: "是否主动关怀充值玩家、给出延伸服务", criteria: "-2：有明显关怀延伸点却未提。不适用：纯机制确认无后续可关怀。" },
+        { title: "回复错误", score: "-3", standard: "充值机制/到账/渠道等事实性解答是否正确", criteria: "-3：对充值机制、到账规则、渠道/版本区分、数据查询等作出事实性错误解答。已查询并如实告知结果的，即便玩家不认可，也不算回复错误。" },
+        { title: "流程问题", score: "-3", standard: "充值问题处理流程是否规范", criteria: "-3：处理流程错误或缺失（如未按扣款/到账核实流程提交工单、记录反馈）。无固定流程场景标「本场景无流程要求」不扣。" },
+        { title: "回复不全面", score: "-2", standard: "是否肯定玩家投入并给出具象建议", criteria: "-2：仅空泛安慰、未肯定老玩家投入、未给具象化建议或引导不完整。" },
       ],
     },
   ];
@@ -3010,7 +3566,7 @@ export default function App() {
   return (
     <main className="h-dvh w-screen overflow-hidden bg-white font-['Noto_Sans_SC'] text-[#4d5966]">
       <section className="flex h-full w-full overflow-hidden bg-white">
-        {currentUser && <PluginSidebar view={view} setView={(v) => { setBackToQuality(false); setView(v); }} currentUser={currentUser} onLogout={logout} />}
+        {currentUser && <PluginSidebar view={view} setView={(v) => { setBackToQuality(false); setView(v); }} currentUser={currentUser} messages={messages} onLogout={logout} />}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-8 shrink-0 items-center justify-end border-b border-[#edf0f2] bg-[#fbfcfd] px-3">
             <button
@@ -3023,13 +3579,18 @@ export default function App() {
           {!currentUser ? (
             <AuthScreen authView={authView} setAuthView={setAuthView} accounts={accounts} onRegister={acc => { setAccounts(prev => [...prev, acc]); enter(acc); }} onLogin={enter} />
           ) : view === "records" ? (
-            <AgentRecords currentUser={currentUser} />
+            <AgentRecords currentUser={currentUser}
+              onAppeal={(rec, reason) => sendMessage({ kind: "appeal", from: currentUser.name, to: [rec.reviewer], complaintId: rec.complaintId, complaintTitle: `${rec.date} 客诉复审`, body: reason, status: "pending" })}
+              onAward={(rec, reason) => sendMessage({ kind: "award", from: currentUser.name, to: inspectorNames(), complaintId: rec.complaintId, complaintTitle: `${rec.date} 客诉自荐`, body: reason, status: "pending", votes: [] })}
+            />
+          ) : view === "messages" ? (
+            <MessagesView currentUser={currentUser} accounts={accounts} messages={messages} excellentCases={excellentCases} onReplyAppeal={replyAppeal} onVoteAward={voteAward} onSendWeekly={sendWeeklyDigest} onRead={markMessagesRead} />
           ) : view === "quality" ? (
-            <QualityHome commonCats={commonCats} privateCats={privateCats} principles={principles} complaints={complaints} aiVersion={aiVersion} currentRuleVersion={latestVersion.id} rerunTask={rerunTask} applyReport={applyReport} reportApplied={reportApplied} openTaskName={openTaskName} setOpenTaskName={setOpenTaskName} openComplaintId={openComplaintId} setOpenComplaintId={setOpenComplaintId} reviews={reviews} setReviews={setReviews} showReport={showReport} setShowReport={setShowReport} onGoToRuleView={(name) => goToRule(name, false)}/>
+            <QualityHome commonCats={commonCats} privateCats={privateCats} principles={principles} complaints={complaints} aiVersion={aiVersion} currentRuleVersion={latestVersion.id} rerunTask={rerunTask} applyReport={applyReport} reportApplied={reportApplied} openTaskName={openTaskName} setOpenTaskName={setOpenTaskName} openComplaintId={openComplaintId} setOpenComplaintId={setOpenComplaintId} reviews={reviews} setReviews={setReviews} showReport={showReport} setShowReport={setShowReport} excellentCases={excellentCases} markExcellent={markExcellent} unmarkExcellent={unmarkExcellent} onGoToRuleView={(name) => goToRule(name, false)}/>
           ) : view === "members" ? (
             <MembersPage accounts={accounts} onSetRole={setMemberRole} onAddMember={addMember} onDeleteMember={deleteMember} />
           ) : (
-            <RulesPage commonCats={commonCats} setCommonCats={setCommonCats} privateCats={privateCats} setPrivateCats={setPrivateCats} principles={principles} setPrinciples={setPrinciples} targetRuleName={targetRuleName} targetEditable={targetEditable} onTargetConsumed={() => { setTargetRuleName(null); setTargetEditable(false); }} onRulesModified={() => {}} showBack={backToQuality} onBack={backToQuality ? () => { setView("quality"); setBackToQuality(false); } : undefined} readOnly={!canEditRules(currentUser.role)}
+            <RulesPage commonCats={commonCats} setCommonCats={setCommonCats} privateCats={privateCats} setPrivateCats={setPrivateCats} principles={principles} setPrinciples={setPrinciples} knowledge={knowledge} onAddKnowledge={addKnowledge} onUpdateKnowledge={updateKnowledge} onDeleteKnowledge={deleteKnowledge} targetRuleName={targetRuleName} targetEditable={targetEditable} onTargetConsumed={() => { setTargetRuleName(null); setTargetEditable(false); }} onRulesModified={() => {}} showBack={backToQuality} onBack={backToQuality ? () => { setView("quality"); setBackToQuality(false); } : undefined} readOnly={!canEditRules(currentUser.role)}
               versions={versions} latestVersion={latestVersion} totalSeq={totalSeq} isDirty={isDirty} viewingVersionId={viewingVersionId} setViewingVersionId={setViewingVersionId} onSaveVersion={saveVersion} onDiscardChanges={discardChanges} onRestoreVersion={restoreVersion}/>
           )}
         </div>
