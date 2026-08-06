@@ -21,18 +21,23 @@ import {
   MessageSquareText,
   AlertCircle,
   Pencil,
+  ShieldCheck,
 } from "lucide-react";
 
 type Role = "agent" | "inspector" | "manager" | "admin";
-type Account = { name: string; password: string; role: Role };
+type AgentGroup = "一线客服" | "VIP一线客服" | "高潜客服" | "VIP客服";
+const AGENT_GROUPS: AgentGroup[] = ["一线客服", "VIP一线客服", "高潜客服", "VIP客服"];
+type Account = { name: string; password: string; role: Role; group?: AgentGroup };
 type View = "quality" | "rules" | "records" | "members";
-const roleLabel = (r: Role) => r === "admin" ? "超级管理者" : r === "manager" ? "业务管理者" : r === "inspector" ? "质检人员" : "客服";
+const roleLabel = (r: Role) => r === "admin" ? "超级管理者" : r === "manager" ? "业务管理者" : r === "inspector" ? "质检人员" : "客服人员";
 const canEditRules = (r: Role) => r === "manager" || r === "admin";
 type ChatMsg = { from: "user" | "agent"; text: string; time: string };
 type AiIssue = { rule: string; score: string; quote: string };
+type AgentType = "AI客服" | "一线客服" | "VIP一线客服" | "高潜客服";
 type Complaint = {
   id: string;
   agent: string;
+  agentType: AgentType;
   user: string;
   score: number;
   chat: ChatMsg[];
@@ -139,6 +144,7 @@ const COMPLAINTS: Complaint[] = [
   {
     id: "c1",
     agent: "李梦",
+    agentType: "一线客服",
     user: "用户01363539162",
     score: 88,
     chat: [
@@ -155,6 +161,7 @@ const COMPLAINTS: Complaint[] = [
   {
     id: "c2",
     agent: "王浩",
+    agentType: "VIP一线客服",
     user: "V2055A",
     score: 72,
     chat: [
@@ -172,6 +179,7 @@ const COMPLAINTS: Complaint[] = [
   {
     id: "c3",
     agent: "李梦",
+    agentType: "一线客服",
     user: "大有可为双鱼座",
     score: 95,
     chat: [
@@ -184,6 +192,7 @@ const COMPLAINTS: Complaint[] = [
   {
     id: "c4",
     agent: "陈静",
+    agentType: "高潜客服",
     user: "机械鲨富大傻俏",
     score: 61,
     chat: [
@@ -203,6 +212,14 @@ const INCLUDE_TAG_OPTIONS = ["咨询类", "打不死鱼", "VIP类", "账号类",
 const DEFAULT_EXCLUDE_TAGS = ["无效会话"];
 const COMPLAINT_STATUS_OPTIONS = ["已回复", "待回复", "已完成", "新客诉", "已解决", "已回绝"];
 const VIP_LEVELS = ["0", "1", "2", "3", "4", "5", "6"];
+// 新建任务时按客服分组选择客服姓名：一级为分组，二级为该分组下的客服姓名。AI客服无具体姓名。
+const AGENT_ROSTER: { group: string; names: string[] }[] = [
+  { group: "一线客服", names: ["李梦", "王晨", "申慧"] },
+  { group: "VIP一线客服", names: ["王浩", "刘滔"] },
+  { group: "高潜客服", names: ["陈静", "罗晶晶"] },
+  { group: "VIP客服", names: ["王丽君", "阳尹新"] },
+  { group: "AI客服", names: [] },
+];
 
 function PluginSidebar({
   view,
@@ -220,8 +237,8 @@ function PluginSidebar({
   return (
     <aside className="flex w-[184px] shrink-0 flex-col bg-[#293542] px-3 py-4 text-[#c5ced8]">
       <div className="mb-7 flex items-center gap-2 px-2">
-        <div className="grid size-8 place-items-center rounded-lg bg-[#4d82f6] text-[16px] font-bold text-white">
-          Q
+        <div className="grid size-8 place-items-center rounded-lg bg-[#4d82f6] text-white">
+          <ShieldCheck className="size-5" />
         </div>
         <div>
           <div className="text-[13px] font-semibold text-white">
@@ -265,7 +282,7 @@ function PluginSidebar({
               className={`flex h-10 items-center gap-2.5 rounded-md px-3 text-left text-[12px] transition ${view === "members" ? "bg-[#4b7ff0] font-medium text-white shadow-sm" : "hover:bg-[#354454]"}`}
             >
               <UserRound className="size-4" />
-              成员管理
+              用户管理
             </button>
           )}
         </>
@@ -304,6 +321,29 @@ function QualityHome({ commonCats, privateCats, principles, complaints, aiVersio
   const [editingValue, setEditingValue] = useState("");
   const [showNewTask, setShowNewTask] = useState(false);
   const [ranToast, setRanToast] = useState(false);
+  // 客诉评分细节筛选：配置驱动。加一列筛选 = 往 detailFilters 加一条配置，无需改 UI 或过滤逻辑。
+  // type: "select" 渲染下拉；"segment" 渲染分段按钮。options 可为静态数组或按客诉列表动态求值。
+  type DetailFilter = {
+    key: string;
+    label: string;
+    type: "select" | "segment";
+    options: string[] | ((rows: Complaint[]) => string[]);
+    match: (c: Complaint, value: string) => boolean;
+  };
+  const detailFilters: DetailFilter[] = [
+    { key: "agent", label: "客服", type: "select",
+      options: rows => Array.from(new Set(rows.map(c => c.agent))),
+      match: (c, v) => c.agent === v },
+    { key: "agentType", label: "客服类型", type: "select",
+      options: rows => Array.from(new Set(rows.map(c => c.agentType))),
+      match: (c, v) => c.agentType === v },
+    { key: "status", label: "审核状态", type: "segment",
+      options: ["已审", "未审"],
+      match: (c, v) => (v === "已审" ? isReviewed(c) : !isReviewed(c)) },
+  ];
+  // 每个筛选的当前取值（""=不限）。
+  const [detailFilterValues, setDetailFilterValues] = useState<Record<string, string>>({});
+  const setDetailFilter = (key: string, value: string) => setDetailFilterValues(prev => ({ ...prev, [key]: value }));
 
   function runTask(task: TaskRow) {
     setTasks(prev => prev.map(t => t.name === task.name ? { ...t, status: "拉取中" } : t));
@@ -483,25 +523,64 @@ function QualityHome({ commonCats, privateCats, principles, complaints, aiVersio
 
                 {/* 客诉评分细节 */}
                 <div className="px-4 pb-4 pt-3">
-                  <div className="mb-2 text-[11px] font-semibold text-[#374350]">客诉评分细节</div>
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-semibold text-[#374350]">客诉评分细节</span>
+                    <div className="ml-auto flex flex-wrap items-center gap-2">
+                      {detailFilters.map(f => {
+                        const opts = typeof f.options === "function" ? f.options(complaints) : f.options;
+                        const val = detailFilterValues[f.key] ?? "";
+                        if (f.type === "segment") {
+                          return (
+                            <div key={f.key} className="flex rounded-md border border-[#e2e8f0] bg-[#f5f7fa] p-0.5">
+                              <button onClick={() => setDetailFilter(f.key, "")}
+                                className={`rounded px-2 py-1 text-[10px] font-medium transition ${val === "" ? "bg-white text-[#4b7ff0] shadow-sm" : "text-[#8b97a3] hover:text-[#5a6572]"}`}>全部</button>
+                              {opts.map(o => (
+                                <button key={o} onClick={() => setDetailFilter(f.key, o)}
+                                  className={`rounded px-2 py-1 text-[10px] font-medium transition ${val === o ? "bg-white text-[#4b7ff0] shadow-sm" : "text-[#8b97a3] hover:text-[#5a6572]"}`}>{o}</button>
+                              ))}
+                            </div>
+                          );
+                        }
+                        return (
+                          <select key={f.key} value={val} onChange={e => setDetailFilter(f.key, e.target.value)}
+                            className="h-7 rounded-md border border-[#dbe3ee] bg-white px-2 text-[10px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0]">
+                            <option value="">全部{f.label}</option>
+                            {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                        );
+                      })}
+                    </div>
+                  </div>
                   <div className="overflow-x-auto">
-                    <div style={{ minWidth: "560px" }}>
-                      <div className="grid grid-cols-[70px_120px_64px_88px_72px] bg-[#f5f8fc] px-3 py-1.5 text-[10px] text-[#8b97a3]">
-                        <span>客服</span><span>用户名</span><span>评分结果</span><span>复审会话</span><span>审核状态</span>
+                    <div style={{ minWidth: "820px" }}>
+                      <div className="grid grid-cols-[70px_96px_120px_64px_120px_88px_72px] bg-[#f5f8fc] px-3 py-1.5 text-[10px] text-[#8b97a3]">
+                        <span>客服</span><span>客服类型</span><span>用户名</span><span>评分结果</span><span>客服处理完成日期</span><span>复审会话</span><span>审核状态</span>
                       </div>
                       <div className="max-h-[420px] overflow-y-auto">
-                        {complaints.map((row) => {
+                        {(() => {
+                          const detailRows = complaints.filter(c =>
+                            detailFilters.every(f => {
+                              const v = detailFilterValues[f.key] ?? "";
+                              return v === "" || f.match(c, v);
+                            })
+                          );
+                          if (detailRows.length === 0) return (
+                            <div className="px-3 py-8 text-center text-[10px] text-[#b0bbc8]">没有符合筛选条件的客诉</div>
+                          );
+                          return detailRows.map((row) => {
                           const reviewed = isReviewed(row);
                           const shown = finalScore(row);
                           const changed = shown !== row.score;
                           return (
-                            <div key={row.id} className="grid grid-cols-[70px_120px_64px_88px_72px] items-center border-t border-[#eef1f4] px-3 py-2.5 text-[10px]">
+                            <div key={row.id} className="grid grid-cols-[70px_96px_120px_64px_120px_88px_72px] items-center border-t border-[#eef1f4] px-3 py-2.5 text-[10px]">
                               <span className="font-medium text-[#465260]">{row.agent}</span>
+                              <span className="truncate text-[#6b7a89]" title={row.agentType}>{row.agentType}</span>
                               <span className="truncate text-[#6b7a89]" title={row.user}>{row.user}</span>
                               <span className="flex items-baseline gap-1">
                                 <span className={`font-semibold ${shown >= 90 ? "text-[#27955d]" : shown >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{shown}分</span>
                                 {changed && <span className="text-[9px] text-[#98a3af] line-through">{row.score}</span>}
                               </span>
+                              <span className="text-[#758291]">{detailTask.date}</span>
                               <div>
                                 <button onClick={() => setOpenComplaintId(row.id)} className="inline-flex items-center gap-0.5 rounded border border-[#dbe3ee] px-1.5 py-0.5 text-[10px] text-[#4b7ff0] hover:bg-[#eef5ff]">
                                   <SlidersHorizontal className="size-2.5" />查看链接
@@ -515,7 +594,8 @@ function QualityHome({ commonCats, privateCats, principles, complaints, aiVersio
                               </div>
                             </div>
                           );
-                        })}
+                          });
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -688,6 +768,9 @@ function NewTaskModal({ onClose, onCreate }: { onClose: () => void; onCreate: (t
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
   const [inspectDate, setInspectDate] = useState(today);
+  const [dateMode, setDateMode] = useState<"single" | "range">("single");
+  const [rangeStart, setRangeStart] = useState(today);
+  const [rangeEnd, setRangeEnd] = useState(today);
   const [rounds, setRounds] = useState("");
   const [limit, setLimit] = useState("");
   const [statuses, setStatuses] = useState<string[]>([]);
@@ -701,7 +784,8 @@ function NewTaskModal({ onClose, onCreate }: { onClose: () => void; onCreate: (t
   const [agents, setAgents] = useState<string[]>([]);
   const [includeDraft, setIncludeDraft] = useState("");
   const [excludeDraft, setExcludeDraft] = useState("");
-  const [agentDraft, setAgentDraft] = useState("");
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
+  const [agentPickerGroup, setAgentPickerGroup] = useState<string | null>(null);
   const [err, setErr] = useState("");
 
   function addTag(list: string[], setList: (v: string[]) => void, val: string, reset: () => void) {
@@ -718,15 +802,32 @@ function NewTaskModal({ onClose, onCreate }: { onClose: () => void; onCreate: (t
   function toggleInclude(t: string) {
     setIncludeTags(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
   }
+  // 二级选择：勾选/取消某个客服姓名。AI客服无姓名，选中后以「AI客服」整体作为一项。
+  function toggleAgent(a: string) {
+    setAgents(prev => prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a]);
+  }
+  // 某分组下的客服姓名全选 / 取消全选。
+  function toggleGroupAll(names: string[]) {
+    setAgents(prev => {
+      const allOn = names.length > 0 && names.every(n => prev.includes(n));
+      return allOn ? prev.filter(n => !names.includes(n)) : [...prev, ...names.filter(n => !prev.includes(n))];
+    });
+  }
   function submit() {
     if (!name.trim()) { setErr("请填写任务名称"); return; }
+    if (dateMode === "range") {
+      if (!rangeStart || !rangeEnd) { setErr("请选择质检的起止日期"); return; }
+      if (rangeStart > rangeEnd) { setErr("质检时间段的开始日期不能晚于结束日期"); return; }
+    }
     if (vipMin && vipMax && Number(vipMin) > Number(vipMax)) { setErr("VIP 范围的最低等级不能高于最高等级"); return; }
+    // 单日：date 即当天；时间段：date 展示为「起 ~ 止」，并在 filters 中带上起止日期。
+    const taskDate = dateMode === "single" ? inspectDate : `${rangeStart} ~ ${rangeEnd}`;
     onCreate({
       name: name.trim(),
       status: "拉取中",
       note: note.trim(),
-      date: inspectDate,
-      filters: { date: inspectDate, rounds: rounds.trim(), limit: limit.trim() || "50", statuses, vipMin, vipMax, includeTags, excludeTags, agents },
+      date: taskDate,
+      filters: { date: taskDate, rounds: rounds.trim(), limit: limit.trim() || "50", statuses, vipMin, vipMax, includeTags, excludeTags, agents },
     });
   }
 
@@ -755,9 +856,29 @@ function NewTaskModal({ onClose, onCreate }: { onClose: () => void; onCreate: (t
           </div>
 
           <div>
-            <label className="mb-1 block text-[11px] text-[#5a6572]">质检日期</label>
-            <input type="date" value={inspectDate} onChange={e => setInspectDate(e.target.value)}
-              className="h-9 w-full rounded-md border border-[#dbe3ee] bg-white px-3 text-[12px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0]" />
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="text-[11px] text-[#5a6572]">质检日期</label>
+              <div className="flex rounded-lg border border-[#e2e8f0] bg-[#f5f7fa] p-0.5">
+                <button onClick={() => { setDateMode("single"); if (err) setErr(""); }}
+                  className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition ${dateMode === "single" ? "bg-white text-[#4b7ff0] shadow-sm" : "text-[#8b97a3] hover:text-[#5a6572]"}`}>某天</button>
+                <button onClick={() => { setDateMode("range"); if (err) setErr(""); }}
+                  className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition ${dateMode === "range" ? "bg-white text-[#4b7ff0] shadow-sm" : "text-[#8b97a3] hover:text-[#5a6572]"}`}>时间段</button>
+              </div>
+            </div>
+            {dateMode === "single" ? (
+              <input type="date" value={inspectDate} onChange={e => setInspectDate(e.target.value)}
+                className="h-9 w-full rounded-md border border-[#dbe3ee] bg-white px-3 text-[12px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0]" />
+            ) : (
+              <div className="flex items-center gap-2">
+                <input type="date" value={rangeStart} max={rangeEnd || undefined}
+                  onChange={e => { setRangeStart(e.target.value); if (err) setErr(""); }}
+                  className="h-9 w-full rounded-md border border-[#dbe3ee] bg-white px-3 text-[12px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0]" />
+                <span className="shrink-0 text-[11px] text-[#8b97a3]">～</span>
+                <input type="date" value={rangeEnd} min={rangeStart || undefined}
+                  onChange={e => { setRangeEnd(e.target.value); if (err) setErr(""); }}
+                  className="h-9 w-full rounded-md border border-[#dbe3ee] bg-white px-3 text-[12px] text-[#3e4c5a] outline-none focus:border-[#4b7ff0]" />
+              </div>
+            )}
           </div>
 
           <div className="border-t border-[#eef1f4] pt-3">
@@ -881,21 +1002,95 @@ function NewTaskModal({ onClose, onCreate }: { onClose: () => void; onCreate: (t
             </div>
 
             <div>
-              <label className="mb-1.5 block text-[10px] text-[#8b97a3]">添加想要质检的客服姓名</label>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {agents.map(a => (
-                  <span key={a} className="flex items-center gap-1 rounded-full bg-[#eef1f5] py-1 pl-2.5 pr-1 text-[10px] font-medium text-[#4d5966]">
-                    {a}
-                    <button onClick={() => removeTag(agents, setAgents, a)} className="grid size-3.5 place-items-center rounded-full text-[#8b97a3] hover:bg-[#dfe4ea]"><X className="size-2.5" /></button>
+              <label className="mb-1.5 block text-[10px] text-[#8b97a3]">添加想要质检的客服（按分组选择）</label>
+              <div className="relative">
+                <div onClick={() => { if (!agentPickerOpen) { setAgentPickerOpen(true); setAgentPickerGroup(AGENT_ROSTER[0].group); } }}
+                  className={`flex min-h-9 cursor-pointer flex-wrap items-center gap-1.5 rounded-md border bg-white px-2 py-1.5 transition ${agentPickerOpen ? "border-[#4b7ff0]" : "border-[#dbe3ee] hover:border-[#c3d0e0]"}`}>
+                  {agents.map(a => (
+                    <span key={a} className="flex items-center gap-1 rounded-full bg-[#eef1f5] py-0.5 pl-2.5 pr-1 text-[10px] font-medium text-[#4d5966]">
+                      {a}
+                      <button onClick={e => { e.stopPropagation(); toggleAgent(a); }} className="grid size-3.5 place-items-center rounded-full text-[#8b97a3] hover:bg-[#dfe4ea]"><X className="size-2.5" /></button>
+                    </span>
+                  ))}
+                  <span className="flex items-center gap-1 px-1 text-[10px] text-[#8b97a3]">
+                    <Plus className="size-3" />{agents.length > 0 ? "继续添加" : "点击选择客服"}
                   </span>
-                ))}
-                <span className="flex items-center gap-1 rounded-full border border-dashed border-[#c9d2dc] bg-[#f8fafc] py-1 pl-2 pr-1.5 text-[10px] text-[#8b97a3]">
-                  <Plus className="size-2.5" />
-                  <input value={agentDraft} onChange={e => setAgentDraft(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter") addTag(agents, setAgents, agentDraft, () => setAgentDraft("")); }}
-                    placeholder="输入姓名，回车添加"
-                    className="w-[110px] bg-transparent text-[10px] text-[#3e4c5a] outline-none placeholder-[#b5bfc9]" />
-                </span>
+                  <ChevronRight className={`ml-auto size-3.5 shrink-0 text-[#8b97a3] transition-transform ${agentPickerOpen ? "rotate-90" : ""}`} />
+                </div>
+                {agentPickerOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setAgentPickerOpen(false)} />
+                    <div className="absolute bottom-full left-0 right-0 z-20 mb-1.5 grid grid-cols-[136px_1fr] overflow-hidden rounded-xl border border-[#e4eaf2] bg-white shadow-[0_-16px_40px_-8px_rgba(41,53,66,.22)]">
+                      {/* 一级：分组 */}
+                      <div className="max-h-[228px] overflow-auto border-r border-[#eef1f4] bg-[#f7f9fc] p-1.5">
+                        {AGENT_ROSTER.map(g => {
+                          const on = agentPickerGroup === g.group;
+                          const picked = g.group === "AI客服" ? (agents.includes("AI客服") ? 1 : 0) : g.names.filter(n => agents.includes(n)).length;
+                          return (
+                            <button key={g.group} onClick={() => setAgentPickerGroup(g.group)}
+                              className={`mb-0.5 flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[11px] transition ${on ? "bg-white font-medium text-[#3562c8] shadow-[0_1px_3px_rgba(41,53,66,.08)]" : "text-[#5a6674] hover:bg-[#eef2f7]"}`}>
+                              <span className="flex items-center gap-1.5">
+                                <span className={`size-1.5 rounded-full ${picked > 0 ? "bg-[#4b7ff0]" : "bg-transparent"}`} />
+                                {g.group}
+                              </span>
+                              {picked > 0 && <span className="rounded-full bg-[#eef4ff] px-1.5 py-0.5 text-[9px] font-semibold text-[#4b7ff0]">{picked}</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {/* 二级：姓名 */}
+                      <div className="flex max-h-[228px] flex-col">
+                        {(() => {
+                          const g = AGENT_ROSTER.find(x => x.group === agentPickerGroup);
+                          if (!g) return null;
+                          if (g.group === "AI客服") {
+                            const on = agents.includes("AI客服");
+                            return (
+                              <div className="overflow-auto p-1.5">
+                                <button onClick={() => toggleAgent("AI客服")}
+                                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] transition ${on ? "bg-[#eef4ff] font-medium text-[#3562c8]" : "text-[#4d5966] hover:bg-[#f4f7fb]"}`}>
+                                  <span className={`grid size-4 shrink-0 place-items-center rounded-[5px] border transition ${on ? "border-[#4b7ff0] bg-[#4b7ff0] text-white" : "border-[#c9d2dc] bg-white"}`}>{on && <Check className="size-3" />}</span>
+                                  AI客服（整组质检，无需选择姓名）
+                                </button>
+                              </div>
+                            );
+                          }
+                          if (g.names.length === 0) return <div className="grid flex-1 place-items-center px-2 py-8 text-[10px] text-[#b0bbc8]">该分组暂无客服</div>;
+                          const allOn = g.names.every(n => agents.includes(n));
+                          return (
+                            <>
+                              {/* 全选行 */}
+                              <button onClick={() => toggleGroupAll(g.names)}
+                                className="flex shrink-0 items-center gap-2 border-b border-[#f0f3f7] px-3 py-2 text-left text-[11px] font-medium text-[#4d5966] transition hover:bg-[#f7f9fc]">
+                                <span className={`grid size-4 shrink-0 place-items-center rounded-[5px] border transition ${allOn ? "border-[#4b7ff0] bg-[#4b7ff0] text-white" : "border-[#c9d2dc] bg-white"}`}>{allOn && <Check className="size-3" />}</span>
+                                全选本组（{g.names.length} 人）
+                              </button>
+                              <div className="grid grid-cols-2 gap-1 overflow-auto p-1.5">
+                                {g.names.map(n => {
+                                  const on = agents.includes(n);
+                                  return (
+                                    <button key={n} onClick={() => toggleAgent(n)}
+                                      className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] transition ${on ? "bg-[#eef4ff] font-medium text-[#3562c8]" : "text-[#4d5966] hover:bg-[#f4f7fb]"}`}>
+                                      <span className={`grid size-4 shrink-0 place-items-center rounded-[5px] border transition ${on ? "border-[#4b7ff0] bg-[#4b7ff0] text-white" : "border-[#c9d2dc] bg-white"}`}>{on && <Check className="size-3" />}</span>
+                                      {n}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+                      <div className="col-span-2 flex items-center justify-between border-t border-[#eef1f4] bg-[#f7f9fc] px-3 py-2">
+                        <span className="text-[10px] text-[#8b97a3]">已选 <span className="font-semibold text-[#4b7ff0]">{agents.length}</span> 项</span>
+                        <div className="flex items-center gap-2">
+                          {agents.length > 0 && <button onClick={() => setAgents([])} className="rounded-md px-2 py-1 text-[10px] text-[#8b97a3] transition hover:bg-[#eef1f5] hover:text-[#4d5966]">清空</button>}
+                          <button onClick={() => setAgentPickerOpen(false)} className="rounded-md bg-[#4b7ff0] px-3 py-1 text-[10px] font-medium text-white transition hover:bg-[#3d6fe0]">完成</button>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -938,12 +1133,17 @@ function ConversationReview({ complaint, review, commonCats, privateCats, onBack
   // 已提交的异议默认只读；草稿默认可编辑。点「更新异议」才展开编辑。
   const [editing, setEditing] = useState(!submitted);
   const detailRef = useRef<HTMLTextAreaElement>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  // 输入框随内容行数自增长：内容变化或进入编辑态时，按 scrollHeight 撑高。
   useEffect(() => {
-    const el = detailRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [detail, editing]);
+    [detailRef.current, noteRef.current].forEach(el => {
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    });
+  }, [detail, agentNote, editing]);
+  // 简约滚动条：细窄、圆角、浅灰，悬停加深；轨道透明。
+  const scrollCls = "[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#d2dae6] hover:[&::-webkit-scrollbar-thumb]:bg-[#b8c3d2]";
 
   const preview = rescore(complaint, objecting ? review!.objectedRules : []);
 
@@ -1024,27 +1224,35 @@ function ConversationReview({ complaint, review, commonCats, privateCats, onBack
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden p-5">
-        <div className="mx-auto flex min-h-0 w-full max-w-[880px] gap-4">
+      <div className="flex min-h-0 flex-1 overflow-hidden px-8 py-5">
+        <div className="mx-auto flex min-h-0 w-full max-w-[1680px] gap-5">
           {/* 左栏：客服与用户对话（独立滚动） */}
-          <div className="flex min-h-0 w-[45%] shrink-0 flex-col overflow-hidden rounded-2xl border border-[#e5ebf3] bg-white shadow-[0_2px_12px_rgba(41,53,66,.05)]">
-            <div className="flex items-center gap-2 border-b border-[#eef1f4] bg-gradient-to-r from-[#f7faff] to-white px-4 py-3">
-              <div className="flex size-6 items-center justify-center rounded-lg bg-[#eef4ff] text-[#4b7ff0]"><MessageSquareText className="size-3.5" /></div>
-              <span className="text-[11px] font-semibold text-[#374350]">客服与用户对话</span>
-              <span className="ml-auto rounded-full bg-[#f0f4fa] px-2 py-0.5 text-[9px] font-medium text-[#8b97a3]">{complaint.chat.length} 条消息</span>
+          <div className="flex min-h-0 w-[45%] shrink-0 flex-col overflow-hidden rounded-2xl border border-[#e6ecf4] bg-white shadow-[0_6px_24px_-8px_rgba(41,53,66,.12)]">
+            <div className="flex items-center gap-2.5 border-b border-[#eef2f7] bg-gradient-to-b from-white to-[#f9fbff] px-4 py-3.5">
+              <div className="flex size-7 items-center justify-center rounded-xl bg-gradient-to-br from-[#eaf1ff] to-[#dfeaff] text-[#4b7ff0] shadow-[inset_0_1px_0_rgba(255,255,255,.7)]"><MessageSquareText className="size-4" /></div>
+              <div className="flex flex-col">
+                <span className="text-[12px] font-semibold text-[#333f4c]">客服与用户对话</span>
+                <span className="text-[9px] text-[#a3adba]">按时间先后展示完整客诉会话</span>
+              </div>
+              <span className="ml-auto flex items-center gap-1 rounded-full bg-[#f2f5fa] px-2.5 py-1 text-[9px] font-medium text-[#7c8896]">
+                <span className="size-1.5 rounded-full bg-[#4b7ff0]" />{complaint.chat.length} 条
+              </span>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto bg-[#fafbfd] px-4 py-4">
-              <div className="space-y-3">
+            <div className={`min-h-0 flex-1 overflow-auto bg-[radial-gradient(circle_at_1px_1px,#e9eef6_1px,transparent_0)] [background-size:16px_16px] bg-[#fbfcfe] px-4 py-5 ${scrollCls}`}>
+              <div className="space-y-4">
               {complaint.chat.map((m, i) => {
                 const agent = m.from === "agent";
                 return (
                   <div key={i} className={`flex items-end gap-2 ${agent ? "flex-row-reverse" : "flex-row"}`}>
-                    <div className={`flex size-6 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold ${agent ? "bg-gradient-to-br from-[#5a8bf5] to-[#3d6fe0] text-white" : "bg-[#e4e8ee] text-[#6b7a89]"}`}>
+                    <div className={`flex size-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ring-2 ring-white ${agent ? "bg-gradient-to-br from-[#5a8bf5] to-[#3d6fe0] text-white shadow-[0_2px_6px_rgba(75,127,240,.35)]" : "bg-gradient-to-br from-[#eef1f6] to-[#e1e6ee] text-[#697585] shadow-[0_2px_5px_rgba(41,53,66,.1)]"}`}>
                       {agent ? "服" : "客"}
                     </div>
-                    <div className={`flex max-w-[76%] flex-col gap-1 ${agent ? "items-end" : "items-start"}`}>
-                      <span className="px-1 text-[9px] text-[#a8b2be]">{agent ? "客服" : "用户"} · {m.time}</span>
-                      <div className={`rounded-2xl px-3.5 py-2 text-[11px] leading-relaxed shadow-[0_1px_3px_rgba(41,53,66,.06)] ${agent ? "rounded-br-md bg-gradient-to-br from-[#5a8bf5] to-[#4b7ff0] text-white" : "rounded-bl-md border border-[#e9edf2] bg-white text-[#3e4c5a]"}`}>
+                    <div className={`flex max-w-[75%] flex-col gap-1 ${agent ? "items-end" : "items-start"}`}>
+                      <span className="flex items-center gap-1 px-1 text-[9px] text-[#aab3bf]">
+                        <span className="font-medium text-[#98a2af]">{agent ? "客服" : "用户"}</span>
+                        <span className="text-[#cdd4dd]">·</span>{m.time}
+                      </span>
+                      <div className={`rounded-[16px] px-3.5 py-2.5 text-[11px] leading-relaxed ${agent ? "rounded-br-[4px] bg-gradient-to-br from-[#5a8bf5] to-[#4577ec] text-white shadow-[0_3px_10px_-2px_rgba(75,127,240,.4)]" : "rounded-bl-[4px] border border-[#e8edf4] bg-white text-[#3e4c5a] shadow-[0_2px_6px_-2px_rgba(41,53,66,.1)]"}`}>
                         {m.text}
                       </div>
                     </div>
@@ -1055,45 +1263,53 @@ function ConversationReview({ complaint, review, commonCats, privateCats, onBack
             </div>
           </div>
 
-          {/* 右栏：AI 评分与复审决策（独立滚动） */}
-          <div className="min-h-0 flex-1 space-y-4 overflow-auto pr-0.5">
-            {/* AI 评分明细 */}
-            <div className="overflow-hidden rounded-2xl border border-[#e5ebf3] bg-white shadow-[0_2px_12px_rgba(41,53,66,.05)]">
-            <div className="flex items-center justify-between border-b border-[#eef1f4] bg-gradient-to-r from-[#f7faff] to-white px-4 py-3">
-              <div className="flex items-center gap-2">
-                <div className="flex size-6 items-center justify-center rounded-lg bg-[#eef4ff] text-[#4b7ff0]"><Sparkles className="size-3.5" /></div>
-                <span className="text-[11px] font-semibold text-[#374350]">AI 评分明细</span>
-                {reran && <span className="rounded-full bg-[#eef4ff] px-1.5 py-0.5 text-[9px] font-medium text-[#4b7ff0]">已重运行</span>}
+          {/* 右栏：AI 评分明细（固定）+ 修改意见（独立滚动） */}
+          <div className="flex min-h-0 flex-1 flex-col gap-4">
+            {/* AI 评分明细（固定不随修改意见滚动） */}
+            <div className="shrink-0 overflow-hidden rounded-2xl border border-[#e6ecf4] bg-white shadow-[0_6px_24px_-8px_rgba(41,53,66,.12)]">
+            <div className="flex items-center justify-between border-b border-[#eef2f7] bg-gradient-to-b from-white to-[#f9fbff] px-4 py-3.5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex size-7 items-center justify-center rounded-xl bg-gradient-to-br from-[#eaf1ff] to-[#dfeaff] text-[#4b7ff0] shadow-[inset_0_1px_0_rgba(255,255,255,.7)]"><Sparkles className="size-4" /></div>
+                <div className="flex flex-col">
+                  <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[#333f4c]">AI 评分明细
+                    {reran && <span className="rounded-full bg-[#eef4ff] px-1.5 py-0.5 text-[9px] font-medium text-[#4b7ff0]">已重运行</span>}
+                  </span>
+                  <span className="text-[9px] text-[#a3adba]">AI 依据规则给出的扣分项与依据</span>
+                </div>
               </div>
-              <div className="flex items-baseline gap-1.5">
-                {reran ? (
-                  <>
-                    <span className="text-[10px] text-[#98a3af] line-through">{complaint.score}</span>
-                    <span className={`text-[20px] font-bold leading-none ${preview.newScore >= 90 ? "text-[#27955d]" : preview.newScore >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{preview.newScore}</span>
-                  </>
-                ) : (
-                  <span className={`text-[20px] font-bold leading-none ${complaint.score >= 90 ? "text-[#27955d]" : complaint.score >= 75 ? "text-[#4b7ff0]" : "text-[#d75d5d]"}`}>{complaint.score}</span>
-                )}
-                <span className="text-[10px] text-[#a8b2be]">分</span>
-              </div>
+              {(() => {
+                const val = reran ? preview.newScore : complaint.score;
+                const tone = val >= 90 ? { t: "text-[#27955d]", b: "from-[#eafaf1] to-[#dcf4e7]", r: "ring-[#c7ead6]" } : val >= 75 ? { t: "text-[#4b7ff0]", b: "from-[#eef4ff] to-[#e0ebff]", r: "ring-[#d3e2fb]" } : { t: "text-[#d75d5d]", b: "from-[#fdeeee] to-[#fbe1e1]", r: "ring-[#f2d2d2]" };
+                return (
+                  <div className={`flex items-center gap-1.5 rounded-2xl bg-gradient-to-br ${tone.b} px-3 py-1.5 ring-1 ${tone.r}`}>
+                    {reran && <span className="text-[10px] text-[#98a3af] line-through">{complaint.score}</span>}
+                    <span className={`text-[22px] font-bold leading-none ${tone.t}`}>{val}</span>
+                    <span className="text-[10px] text-[#a8b2be]">分</span>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="p-4">
             {/* 明细项：重运行后展示新明细，被移除项以删除线标出 */}
             {complaint.aiIssues.length === 0 ? (
-              <div className="flex items-center gap-2 rounded-xl bg-[#f2faf5] px-3 py-2.5 text-[10px] text-[#27955d]"><Check className="size-3.5 shrink-0" />本次会话无扣分项，AI 判定表现良好。</div>
+              <div className="flex items-center gap-2.5 rounded-2xl border border-[#d7eede] bg-gradient-to-br from-[#f2faf5] to-[#eafaf1] px-4 py-3.5 text-[11px] text-[#27955d]">
+                <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#d7f0e1] text-[#27955d]"><Check className="size-3.5" /></span>
+                本次会话无扣分项，AI 判定表现良好。
+              </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {complaint.aiIssues.map((iss, i) => {
                   const removed = reran && objectedRules.includes(iss.rule);
                   return (
-                    <div key={i} className={`rounded-xl border-l-[3px] py-2 pl-3 pr-3 ${removed ? "border-l-[#8bbf5f] bg-[#f4f8ee]" : "border-l-[#e08585] bg-[#fdf6f6]"}`}>
-                      <div className="mb-1 flex items-center gap-2">
-                        <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${removed ? "bg-[#e7f2dc] text-[#5c8a3a]" : "bg-[#fce8e8] text-[#d75d5d]"}`}>{iss.rule}</span>
-                        <span className={`text-[10px] font-semibold ${removed ? "text-[#5c8a3a] line-through" : "text-[#d75d5d]"}`}>{iss.score}</span>
-                        {removed && <span className="ml-auto text-[9px] text-[#5c8a3a]">已按新规则撤销扣分</span>}
+                    <div key={i} className={`relative overflow-hidden rounded-2xl py-2.5 pl-4 pr-3.5 transition ${removed ? "border border-[#dcecc9] bg-gradient-to-br from-[#f6faf0] to-[#f0f6e6]" : "bg-gradient-to-br from-[#fef7f7] to-[#fdf0f0]"}`}>
+                      <span className={`absolute inset-y-0 left-0 w-1 ${removed ? "bg-[#8bbf5f]" : "bg-[#e08585]"}`} />
+                      <div className="mb-1.5 flex items-center gap-2">
+                        <span className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold ${removed ? "bg-[#e7f2dc] text-[#5c8a3a]" : "bg-[#fce4e4] text-[#d1544f]"}`}>{iss.rule}</span>
+                        <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${removed ? "bg-[#eef5e4] text-[#5c8a3a] line-through" : "bg-[#fbeaea] text-[#d1544f]"}`}>{iss.score}</span>
+                        {removed && <span className="ml-auto flex items-center gap-1 text-[9px] font-medium text-[#5c8a3a]"><Check className="size-2.5" />已按新规则撤销</span>}
                       </div>
-                      <div className={`text-[10px] italic leading-relaxed ${removed ? "text-[#9aa891]" : "text-[#8797a5]"}`}>{iss.quote}</div>
+                      <div className={`text-[10px] italic leading-relaxed ${removed ? "text-[#9aa891]" : "text-[#8b97a4]"}`}>{iss.quote}</div>
                     </div>
                   );
                 })}
@@ -1125,19 +1341,19 @@ function ConversationReview({ complaint, review, commonCats, privateCats, onBack
             </div>
           </div>
 
-          {/* 异议面板：只要处于异议中就一直显示（草稿或已提交），跳转规则页返回后仍在此流程 */}
+          {/* 修改意见：卡片头部固定，卡片内正文独立滚动（滚动条内嵌卡片） */}
           {objecting && (
-            <div className="overflow-hidden rounded-2xl border border-[#e5ebf3] bg-white shadow-[0_2px_12px_rgba(41,53,66,.05)]">
-              <div className="flex items-center justify-between border-b border-[#eef1f4] bg-gradient-to-r from-[#f7faff] to-white px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <div className="flex size-6 items-center justify-center rounded-lg bg-[#eef4ff] text-[#4b7ff0]"><Pencil className="size-3.5" /></div>
-                  <span className="text-[11px] font-semibold text-[#374350]">修改意见</span>
+            <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-[#e6ecf4] bg-white shadow-[0_6px_24px_-8px_rgba(41,53,66,.12)]">
+              <div className="flex shrink-0 items-center justify-between border-b border-[#eef2f7] bg-gradient-to-b from-white to-[#f9fbff] px-4 py-3.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex size-7 items-center justify-center rounded-xl bg-gradient-to-br from-[#eaf1ff] to-[#dfeaff] text-[#4b7ff0] shadow-[inset_0_1px_0_rgba(255,255,255,.7)]"><Pencil className="size-4" /></div>
+                  <span className="text-[12px] font-semibold text-[#333f4c]">修改意见</span>
                 </div>
                 {submitted
                   ? <span className="flex items-center gap-1 rounded-full bg-[#eaf7f0] px-2 py-0.5 text-[10px] font-medium text-[#27955d]"><span className="size-1.5 rounded-full bg-[#34a36a]" />已提交异议</span>
                   : <span className="flex items-center gap-1 rounded-full bg-[#fdf4e6] px-2 py-0.5 text-[10px] font-medium text-[#e59735]"><span className="size-1.5 rounded-full bg-[#e59735]" />异议草稿（待提交）</span>}
               </div>
-              <div className="p-4">
+              <div className={`min-h-0 flex-1 overflow-auto p-4 ${scrollCls}`}>
               {editing ? (
                 <div className="space-y-3.5">
                   {involvedRules.length > 0 ? (
@@ -1250,11 +1466,11 @@ function ConversationReview({ complaint, review, commonCats, privateCats, onBack
 
                   <div>
                     <label className="mb-1.5 block text-[10px] text-[#8b97a3]">对人工客服评分备注<span className="ml-1 text-[#a8b2be]">（选填）</span></label>
-                    <textarea value={agentNote}
+                    <textarea value={agentNote} ref={noteRef}
                       onChange={e => setAgentNote(e.target.value)}
                       rows={3}
                       placeholder="针对该客服本次表现的评分说明、改进建议等（将随最终结果反馈给客服）"
-                      className="w-full resize-none rounded-xl border border-[#dbe3ee] bg-[#fafbfd] px-3 py-2.5 text-[11px] leading-relaxed text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0] focus:bg-white" />
+                      className="w-full resize-none overflow-hidden rounded-xl border border-[#dbe3ee] bg-[#fafbfd] px-3 py-2.5 text-[11px] leading-relaxed text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0] focus:bg-white" />
                   </div>
 
                   {err && <div className="flex items-center gap-1 text-[10px] text-[#d75d5d]"><AlertCircle className="size-3" />{err}</div>}
@@ -2336,57 +2552,84 @@ function AgentRecords({ currentUser }: { currentUser: Account }) {
   );
 }
 
-function MembersPage({ accounts, onSetRole }: { accounts: Account[]; onSetRole: (name: string, role: Role) => void }) {
+function MembersPage({ accounts, onSetRole, onAddMember, onDeleteMember }: { accounts: Account[]; onSetRole: (name: string, role: Role, group?: AgentGroup) => void; onAddMember: (acc: Account) => void; onDeleteMember: (name: string) => void }) {
   const members = accounts.filter(a => a.role !== "admin");
+  // 新增成员表单：姓名 + 密码 + 角色下拉 + 新增按钮；角色选「客服人员」时额外显示分组下拉。
+  const roleOptions: Role[] = ["manager", "inspector", "agent"];
+  const [newName, setNewName] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState<Role>("inspector");
+  const [newGroup, setNewGroup] = useState<AgentGroup>("一线客服");
+  const [err, setErr] = useState("");
+
+  function submitNew() {
+    const n = newName.trim();
+    if (!n || !newPassword) { setErr("请填写姓名和密码"); return; }
+    if (accounts.some(a => a.name === n)) { setErr("该姓名已存在，请更换"); return; }
+    onAddMember({ name: n, password: newPassword, role: newRole, group: newRole === "agent" ? newGroup : undefined });
+    setNewName(""); setNewPassword(""); setNewRole("inspector"); setNewGroup("一线客服"); setErr("");
+  }
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#f7f8fa]">
-      <header className="flex h-[58px] items-center justify-between border-b border-[#e2e6eb] bg-white px-5">
-        <div>
-          <h1 className="text-[15px] font-semibold text-[#2f3b48]">成员管理</h1>
-          <p className="mt-0.5 text-[10px] text-[#8b96a3]">授予或收回「业务管理者」角色；仅业务管理者/超级管理者可修改质检规则</p>
+      <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
+        <h1 className="mb-4 text-[20px] font-semibold text-[#2f3b48]">成员管理</h1>
+
+        {/* 新增成员工具条 */}
+        <div className="mb-4 rounded-xl border border-[#e6ebf1] bg-white px-4 py-4 shadow-[0_1px_3px_rgba(41,53,66,.04)]">
+          <div className="flex flex-wrap items-center gap-3">
+            <input value={newName} onChange={e => { setNewName(e.target.value); if (err) setErr(""); }}
+              placeholder="姓名"
+              className="h-10 w-[200px] rounded-lg border border-[#dde3ee] bg-[#eef1f8] px-3 text-[13px] text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0] focus:bg-white placeholder-[#9aa6b5]" />
+            <input type="password" value={newPassword} onChange={e => { setNewPassword(e.target.value); if (err) setErr(""); }}
+              placeholder="密码"
+              className="h-10 w-[200px] rounded-lg border border-[#dde3ee] bg-[#eef1f8] px-3 text-[13px] text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0] focus:bg-white placeholder-[#9aa6b5]" />
+            <select value={newRole} onChange={e => setNewRole(e.target.value as Role)}
+              className="h-10 w-[160px] rounded-lg border border-[#dde3ee] bg-white px-3 text-[13px] text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0]">
+              {roleOptions.map(r => <option key={r} value={r}>{roleLabel(r)}</option>)}
+            </select>
+            {newRole === "agent" && (
+              <select value={newGroup} onChange={e => setNewGroup(e.target.value as AgentGroup)}
+                className="h-10 w-[160px] rounded-lg border border-[#dde3ee] bg-white px-3 text-[13px] text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0]">
+                {AGENT_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            )}
+            <button onClick={submitNew}
+              className="h-10 rounded-lg bg-[#4b7ff0] px-5 text-[13px] font-medium text-white transition hover:bg-[#3f72e0]">新增</button>
+            {err && <span className="text-[12px] text-[#d75d5d]">{err}</span>}
+          </div>
         </div>
-      </header>
-      <div className="min-h-0 flex-1 overflow-auto p-5">
-        <div className="overflow-hidden rounded-lg border border-[#e1e6eb] bg-white">
-          <div className="border-b border-[#e9edf0] px-4 py-3">
-            <div className="text-[12px] font-semibold text-[#374350]">成员列表</div>
-            <div className="mt-0.5 text-[10px] text-[#8b97a3]">共 {members.length} 名成员（超级管理者不在此列出）</div>
+
+        {/* 成员列表 */}
+        <div className="overflow-hidden rounded-xl border border-[#e6ebf1] bg-white shadow-[0_1px_3px_rgba(41,53,66,.04)]">
+          <div className="grid grid-cols-[1fr_360px_80px] items-center border-b border-[#eef1f4] px-6 py-3 text-[13px] text-[#8b97a3]">
+            <span>姓名</span><span>角色 / 客服分组</span><span className="text-right">操作</span>
           </div>
           {members.length === 0 ? (
-            <div className="px-4 py-8 text-center text-[11px] text-[#b0bbc8]">暂无其他成员，注册账号后将显示在此</div>
+            <div className="px-6 py-10 text-center text-[13px] text-[#b0bbc8]">暂无成员，使用上方工具条新增成员</div>
           ) : (
-            <>
-              <div className="grid grid-cols-[1.4fr_1fr_160px] bg-[#fafbfc] px-4 py-2 text-[10px] text-[#8b97a3]">
-                <span>姓名</span><span>当前角色</span><span>操作</span>
+            members.map(m => (
+              <div key={m.name} className="grid grid-cols-[1fr_360px_80px] items-center border-b border-[#f2f4f7] px-6 py-3.5 text-[14px] last:border-b-0">
+                <span className="font-medium text-[#3e4c5a]">{m.name}</span>
+                <div className="flex items-center gap-2">
+                  <select value={m.role} onChange={e => { const r = e.target.value as Role; onSetRole(m.name, r, r === "agent" ? (m.group ?? "一线客服") : undefined); }}
+                    className="h-10 w-[160px] rounded-lg border border-[#dde3ee] bg-white px-3 text-[13px] text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0]">
+                    {roleOptions.map(r => <option key={r} value={r}>{roleLabel(r)}</option>)}
+                    {!roleOptions.includes(m.role) && <option value={m.role}>{roleLabel(m.role)}</option>}
+                  </select>
+                  {m.role === "agent" && (
+                    <select value={m.group ?? "一线客服"} onChange={e => onSetRole(m.name, "agent", e.target.value as AgentGroup)}
+                      className="h-10 w-[160px] rounded-lg border border-[#dde3ee] bg-white px-3 text-[13px] text-[#3e4c5a] outline-none transition focus:border-[#4b7ff0]">
+                      {AGENT_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  )}
+                </div>
+                <span className="text-right">
+                  <button onClick={() => onDeleteMember(m.name)}
+                    className="text-[13px] text-[#e0645f] transition hover:text-[#c94a45]">删除</button>
+                </span>
               </div>
-              {members.map(m => {
-                const isManager = m.role === "manager";
-                return (
-                  <div key={m.name} className="grid grid-cols-[1.4fr_1fr_160px] items-center border-t border-[#edf0f3] px-4 py-2.5 text-[11px]">
-                    <div className="flex items-center gap-2">
-                      <div className="grid size-6 shrink-0 place-items-center rounded-full bg-[#4d82f6] text-[10px] font-semibold text-white">{m.name.slice(0, 1)}</div>
-                      <span className="font-medium text-[#465260]">{m.name}</span>
-                    </div>
-                    <span>
-                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${isManager ? "bg-[#eef4ff] text-[#4b7ff0]" : "bg-[#f0f2f5] text-[#98a3af]"}`}>{roleLabel(m.role)}</span>
-                    </span>
-                    <div>
-                      {isManager ? (
-                        <button onClick={() => onSetRole(m.name, "inspector")}
-                          className="rounded border border-[#f0d8d8] bg-white px-2 py-1 text-[10px] text-[#d75d5d] transition hover:bg-[#fdf3f3]">
-                          收回管理者
-                        </button>
-                      ) : (
-                        <button onClick={() => onSetRole(m.name, "manager")}
-                          className="rounded border border-[#d5e0f5] bg-[#eaf2ff] px-2 py-1 text-[10px] text-[#4b7ff0] transition hover:bg-[#daeaff]">
-                          授予业务管理者
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </>
+            ))
           )}
         </div>
       </div>
@@ -2519,7 +2762,19 @@ function AuthScreen({
 export default function App() {
   const [view, setView] = useState<View>("quality");
   const [closed, setClosed] = useState(false);
-  const [accounts, setAccounts] = useState<Account[]>([{ name: "超级管理员", password: "admin", role: "admin" }]);
+  const [accounts, setAccounts] = useState<Account[]>([
+    { name: "超级管理员", password: "admin", role: "admin" },
+    { name: "刁丹", password: "123456", role: "inspector" },
+    { name: "刘滔", password: "123456", role: "inspector" },
+    { name: "李浩", password: "123456", role: "inspector" },
+    { name: "汪翔", password: "123456", role: "inspector" },
+    { name: "王丽君", password: "123456", role: "inspector" },
+    { name: "王哲", password: "123456", role: "inspector" },
+    { name: "王晨", password: "123456", role: "inspector" },
+    { name: "申慧", password: "123456", role: "inspector" },
+    { name: "罗晶晶", password: "123456", role: "inspector" },
+    { name: "阳尹新", password: "123456", role: "inspector" },
+  ]);
   const [currentUser, setCurrentUser] = useState<Account | null>(null);
   const [authView, setAuthView] = useState<"login" | "register">("login");
   const [targetRuleName, setTargetRuleName] = useState<string | null>(null);
@@ -2537,9 +2792,17 @@ export default function App() {
     setCurrentUser(acc);
     setView(acc.role === "agent" ? "records" : "quality");
   }
-  function setMemberRole(name: string, role: Role) {
-    setAccounts(prev => prev.map(a => a.name === name ? { ...a, role } : a));
-    setCurrentUser(cur => cur && cur.name === name ? { ...cur, role } : cur);
+  function setMemberRole(name: string, role: Role, group?: AgentGroup) {
+    setAccounts(prev => prev.map(a => a.name === name ? { ...a, role, group: role === "agent" ? (group ?? a.group ?? "一线客服") : undefined } : a));
+    setCurrentUser(cur => cur && cur.name === name ? { ...cur, role, group: role === "agent" ? (group ?? cur.group ?? "一线客服") : undefined } : cur);
+  }
+  // 新增成员：姓名唯一校验由 MembersPage 内部完成，这里直接写入账号表。
+  function addMember(acc: Account) {
+    setAccounts(prev => [...prev, acc]);
+  }
+  function deleteMember(name: string) {
+    setAccounts(prev => prev.filter(a => a.name !== name));
+    setCurrentUser(cur => cur && cur.name === name ? null : cur);
   }
   function logout() {
     setCurrentUser(null);
@@ -2745,8 +3008,8 @@ export default function App() {
       </main>
     );
   return (
-    <main className="grid h-dvh min-h-[640px] place-items-center overflow-hidden bg-[radial-gradient(circle_at_20%_10%,#eef5ff,transparent_34%),linear-gradient(135deg,#edf1f4,#e7ecef)] p-7 font-['Noto_Sans_SC'] text-[#4d5966]">
-      <section className="flex h-full max-h-[720px] w-full max-w-[1040px] overflow-hidden rounded-xl border border-white/80 bg-white shadow-[0_24px_60px_rgba(41,53,66,.20)]">
+    <main className="h-dvh w-screen overflow-hidden bg-white font-['Noto_Sans_SC'] text-[#4d5966]">
+      <section className="flex h-full w-full overflow-hidden bg-white">
         {currentUser && <PluginSidebar view={view} setView={(v) => { setBackToQuality(false); setView(v); }} currentUser={currentUser} onLogout={logout} />}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-8 shrink-0 items-center justify-end border-b border-[#edf0f2] bg-[#fbfcfd] px-3">
@@ -2764,7 +3027,7 @@ export default function App() {
           ) : view === "quality" ? (
             <QualityHome commonCats={commonCats} privateCats={privateCats} principles={principles} complaints={complaints} aiVersion={aiVersion} currentRuleVersion={latestVersion.id} rerunTask={rerunTask} applyReport={applyReport} reportApplied={reportApplied} openTaskName={openTaskName} setOpenTaskName={setOpenTaskName} openComplaintId={openComplaintId} setOpenComplaintId={setOpenComplaintId} reviews={reviews} setReviews={setReviews} showReport={showReport} setShowReport={setShowReport} onGoToRuleView={(name) => goToRule(name, false)}/>
           ) : view === "members" ? (
-            <MembersPage accounts={accounts} onSetRole={setMemberRole} />
+            <MembersPage accounts={accounts} onSetRole={setMemberRole} onAddMember={addMember} onDeleteMember={deleteMember} />
           ) : (
             <RulesPage commonCats={commonCats} setCommonCats={setCommonCats} privateCats={privateCats} setPrivateCats={setPrivateCats} principles={principles} setPrinciples={setPrinciples} targetRuleName={targetRuleName} targetEditable={targetEditable} onTargetConsumed={() => { setTargetRuleName(null); setTargetEditable(false); }} onRulesModified={() => {}} showBack={backToQuality} onBack={backToQuality ? () => { setView("quality"); setBackToQuality(false); } : undefined} readOnly={!canEditRules(currentUser.role)}
               versions={versions} latestVersion={latestVersion} totalSeq={totalSeq} isDirty={isDirty} viewingVersionId={viewingVersionId} setViewingVersionId={setViewingVersionId} onSaveVersion={saveVersion} onDiscardChanges={discardChanges} onRestoreVersion={restoreVersion}/>
