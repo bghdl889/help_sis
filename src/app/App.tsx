@@ -3059,18 +3059,78 @@ function MembersPage({ accounts, onSetRole, onAddMember, onDeleteMember }: { acc
   );
 }
 
+// 引导页：登录前的产品介绍，帮助用户理解这是一款什么工具。
+function LandingScreen({ onEnter }: { onEnter: () => void }) {
+  const features = [
+    { icon: <Bot className="size-5" />, tone: "from-[#eaf1ff] to-[#dceaff] text-[#3d6fe0]", title: "AI 自动质检", desc: "按规则对客服会话逐条评分，秒级产出扣分项与依据，覆盖全量客诉。" },
+    { icon: <ClipboardCheck className="size-5" />, tone: "from-[#eafaf1] to-[#d9f2e5] text-[#27955d]", title: "人工复审闭环", desc: "质检人员对 AI 评分认可或提出异议，撤销不合理扣分并重算，最终以人工为准。" },
+    { icon: <SlidersHorizontal className="size-5" />, tone: "from-[#fdf3e6] to-[#fbe8cf] text-[#b9791d]", title: "规则与知识库", desc: "通用/专用规则可视化配置，按标签命中场景，门类挂载知识库供评分参考。" },
+    { icon: <Inbox className="size-5" />, tone: "from-[#f0ecff] to-[#e4dcff] text-[#6b5bd0]", title: "申诉 · 申奖 · 优秀案例", desc: "客服可申诉或自荐，质检投票评优，每周把优秀案例下发全员，形成正向激励。" },
+  ];
+  const flow = ["AI 初评", "人工复审", "规则迭代", "结果下发"];
+  return (
+    <div className="min-h-0 flex-1 overflow-auto bg-gradient-to-b from-[#f4f8ff] via-[#f7f9fc] to-white">
+      {/* 顶部品牌条 */}
+      <div className="flex items-center justify-between px-8 py-5">
+        <div className="flex items-center gap-2.5">
+          <div className="grid size-9 place-items-center rounded-xl bg-gradient-to-br from-[#5a8bf5] to-[#3d6fe0] text-white shadow-[0_6px_16px_-4px_rgba(75,127,240,.5)]"><ShieldCheck className="size-5" /></div>
+          <div>
+            <div className="text-[14px] font-semibold text-[#2f3b48]">质检助手</div>
+            <div className="text-[10px] tracking-wide text-[#9aa6b3]">Quality Assistant</div>
+          </div>
+        </div>
+        <button onClick={onEnter} className="flex items-center gap-1 rounded-lg border border-[#d5e0f5] bg-white px-3.5 py-2 text-[12px] font-medium text-[#3562c8] transition hover:bg-[#eef5ff]">登录 / 注册<ChevronRight className="size-3.5" /></button>
+      </div>
+
+      {/* 主视觉 */}
+      <div className="mx-auto max-w-[820px] px-8 pt-10 text-center">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#eaf2ff] px-3 py-1 text-[11px] font-medium text-[#3d6fe0]"><Sparkles className="size-3.5" />AI + 人工双重把关的客服质检工具</span>
+        <h1 className="mt-5 text-[34px] font-bold leading-tight text-[#26313d]">让每一次客诉服务<br /><span className="bg-gradient-to-r from-[#4b7ff0] to-[#6b5bd0] bg-clip-text text-transparent">都被公正地看见</span></h1>
+        <p className="mx-auto mt-4 max-w-[560px] text-[13px] leading-relaxed text-[#6b7784]">质检助手用 AI 对客服会话自动评分、由质检人员复审校准，规则与知识库持续沉淀迭代，并通过申诉、自荐与优秀案例机制，让评价既严谨又有温度。</p>
+        <div className="mt-7 flex items-center justify-center gap-3">
+          <button onClick={onEnter} className="flex items-center gap-1.5 rounded-xl bg-gradient-to-br from-[#5a8bf5] to-[#3d6fe0] px-6 py-3 text-[13px] font-semibold text-white shadow-[0_10px_24px_-6px_rgba(75,127,240,.55)] transition hover:brightness-105">立即使用<ChevronRight className="size-4" /></button>
+        </div>
+        {/* 流程条 */}
+        <div className="mt-9 flex items-center justify-center gap-2 text-[11px] text-[#8b96a3]">
+          {flow.map((s, i) => (
+            <React.Fragment key={s}>
+              <span className="rounded-full bg-white px-3 py-1.5 font-medium text-[#4d5966] shadow-[0_1px_3px_rgba(41,53,66,.06)] ring-1 ring-inset ring-[#eef1f5]">{s}</span>
+              {i < flow.length - 1 && <ChevronRight className="size-3.5 text-[#c5cdd6]" />}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+
+      {/* 能力卡片 */}
+      <div className="mx-auto mt-12 grid max-w-[880px] grid-cols-1 gap-4 px-8 pb-14 sm:grid-cols-2">
+        {features.map(f => (
+          <div key={f.title} className="rounded-2xl border border-[#eaeef3] bg-white p-5 shadow-[0_2px_10px_-4px_rgba(41,53,66,.08)] transition hover:-translate-y-0.5 hover:shadow-[0_10px_28px_-10px_rgba(41,53,66,.18)]">
+            <div className={`mb-3 grid size-11 place-items-center rounded-xl bg-gradient-to-br ${f.tone}`}>{f.icon}</div>
+            <div className="text-[14px] font-semibold text-[#2f3b48]">{f.title}</div>
+            <div className="mt-1.5 text-[12px] leading-relaxed text-[#7a8794]">{f.desc}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="border-t border-[#eef1f5] py-5 text-center text-[10px] text-[#a8b2be]">质检助手 · 面向客服团队的智能质检与激励平台</div>
+    </div>
+  );
+}
+
 function AuthScreen({
   authView,
   setAuthView,
   accounts,
   onRegister,
   onLogin,
+  onBack,
 }: {
   authView: "login" | "register";
   setAuthView: (v: "login" | "register") => void;
   accounts: Account[];
   onRegister: (acc: Account) => void;
   onLogin: (acc: Account) => void;
+  onBack?: () => void;
 }) {
   const [role, setRole] = useState<Role>("agent");
   const [name, setName] = useState("");
@@ -3176,6 +3236,10 @@ function AuthScreen({
             <>没有账号？<button onClick={() => switchView("register")} className="text-[#4b7ff0] hover:underline">去注册</button></>
           )}
         </div>
+
+        {onBack && (
+          <button onClick={onBack} className="mx-auto mt-4 flex items-center gap-1 text-[10px] text-[#a8b2be] hover:text-[#6b7a89]"><ChevronRight className="size-3 rotate-180" />返回产品介绍</button>
+        )}
       </div>
     </div>
   );
@@ -3208,6 +3272,7 @@ const SEED_MESSAGES: Message[] = [
 export default function App() {
   const [view, setView] = useState<View>("quality");
   const [closed, setClosed] = useState(false);
+  const [entered, setEntered] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([
     { name: "超级管理员", password: "admin", role: "admin" },
     { name: "刁丹", password: "123456", role: "inspector" },
@@ -3271,6 +3336,7 @@ export default function App() {
     setExcellentCases([]);
     setKnowledge(SEED_KNOWLEDGE);
     setAuthView("login");
+    setEntered(false);
   }
   function goToRule(name: string, editable: boolean) {
     setTargetRuleName(name);
@@ -3577,7 +3643,9 @@ export default function App() {
             </button>
           </div>
           {!currentUser ? (
-            <AuthScreen authView={authView} setAuthView={setAuthView} accounts={accounts} onRegister={acc => { setAccounts(prev => [...prev, acc]); enter(acc); }} onLogin={enter} />
+            entered
+              ? <AuthScreen authView={authView} setAuthView={setAuthView} accounts={accounts} onRegister={acc => { setAccounts(prev => [...prev, acc]); enter(acc); }} onLogin={enter} onBack={() => setEntered(false)} />
+              : <LandingScreen onEnter={() => setEntered(true)} />
           ) : view === "records" ? (
             <AgentRecords currentUser={currentUser}
               onAppeal={(rec, reason) => sendMessage({ kind: "appeal", from: currentUser.name, to: [rec.reviewer], complaintId: rec.complaintId, complaintTitle: `${rec.date} 客诉复审`, body: reason, status: "pending" })}
