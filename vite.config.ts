@@ -17,6 +17,9 @@ function figmaAssetResolver() {
 }
 
 export default defineConfig({
+  // 相对路径打包：产物 dist/index.html 直接用浏览器打开（file://）也能加载 assets，
+  // 绝对路径（/assets/...）在 file:// 下会 404，页面表现为整屏白屏。
+  base: './',
   plugins: [
     figmaAssetResolver(),
     // The React and Tailwind plugins are both required for Make, even if
