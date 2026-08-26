@@ -144,7 +144,8 @@ type Review = {
   agentNote: string;
   deductedRules: string[];
 };
-type Principle = { title: string; content: string };
+type Principle = { title: string; content: string; scopes?: AgentType[] };
+const principleApplies = (p: Principle, t: AgentType) => !p.scopes || p.scopes.length === 0 || p.scopes.includes(t);
 
 // —— 质检任务 ——
 // complaintIds：本任务实际纳入的客诉。报告模块据此判断「该任务客诉是否已全部复审完」。
@@ -2978,13 +2979,6 @@ function normalizeDim(d: Dim): Dim {
   const kept = Object.entries(d.variants ?? {}).filter(([t, v]) => v.trim() !== "" && v !== d.criteria && (!scopes || scopes.includes(t)));
   return { ...d, scopes, variants: kept.length > 0 ? Object.fromEntries(kept) : undefined };
 }
-// 生效范围在列表里的短标签：全部 / 仅某一类 / N 类。
-function scopeLabel(d: Dim, all: AgentType[]): string {
-  const sc = d.scopes;
-  if (!sc || sc.length === 0 || sc.length >= all.length) return "全部客服";
-  if (sc.length === 1) return `仅${sc[0]}`;
-  return `${sc.length} 类客服`;
-}
 // defaultScopes：本门类新增维度默认落在哪些客服类型上，只是个默认值，逐条仍可改。
 type Cat = { name: string; expanded: boolean; enabled: boolean; renaming: boolean; dimensions: Dim[]; tags?: string[]; knowledgeIds?: string[]; defaultScopes?: AgentType[] };
 type NewDimDraft = Dim;
@@ -3004,26 +2998,29 @@ const pad2 = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 const fmtVersionTime = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 
 // —— 生效客服类型编辑器 ——
-// UX 取向是「默认统一、按需分叉」：
-//   1. 一排 chip 多选设生效范围，默认全选，不点也是今天的行为；
-//   2. 只有选中 ≥2 类时，才出现「分别设判断标准」的入口，多数规则完全不受打扰；
-//   3. 展开分叉时，各类型的标准预填基准文本——用户在改差异，不是从零写；
-//   4. tab 上标「同基准 / 已改」，没动过的不落库、自动回落，避免攒出一堆近似重复的文本。
-function DimScopeEditor({ draft, patch, agentTypes, splitKey, splitOpen, setSplitOpen, splitTab, setSplitTab }: {
+// UX 取向是「默认按当前视角展示」：
+//   1. 下拉多选设生效范围，默认全选，不点也是今天的行为；
+//   2. 生效范围包含多类客服时，直接展开分类型判断标准；
+//   3. 默认展示右上角视角选择器当前选中的客服类型，用户可切换查看其他类型；
+//   4. 不额外展示「同基准 / 已改」状态，避免增加判断与维护复杂度。
+function DimScopeEditor({ draft, patch, agentTypes, viewAs, scoreControl }: {
   draft: Dim;
   patch: (p: Partial<Dim>) => void;
   agentTypes: AgentType[];
-  splitKey: string;
-  splitOpen: Record<string, boolean>;
-  setSplitOpen: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-  splitTab: Record<string, AgentType>;
-  setSplitTab: React.Dispatch<React.SetStateAction<Record<string, AgentType>>>;
+  viewAs?: AgentType | null;
+  scoreControl: React.ReactNode;
 }) {
   const scopes = draft.scopes && draft.scopes.length > 0 ? draft.scopes : agentTypes;
   const allOn = scopes.length >= agentTypes.length;
   const forked = variantTypes(draft);
-  const open = !!splitOpen[splitKey] || forked.length > 0;
-  const tab = splitTab[splitKey] && scopes.includes(splitTab[splitKey]) ? splitTab[splitKey] : scopes[0];
+  const open = scopes.length >= 2;
+  const defaultTab = viewAs && scopes.includes(viewAs) ? viewAs : scopes[0];
+  const [scopePickerOpen, setScopePickerOpen] = useState(false);
+  const [tab, setTab] = useState<AgentType | undefined>(defaultTab);
+
+  React.useEffect(() => {
+    if (defaultTab && !scopes.includes(tab ?? "")) setTab(defaultTab);
+  }, [defaultTab, scopes, tab]);
 
   function toggleType(t: AgentType) {
     const next = scopes.includes(t) ? scopes.filter(x => x !== t) : [...agentTypes.filter(x => scopes.includes(x) || x === t)];
@@ -3033,45 +3030,59 @@ function DimScopeEditor({ draft, patch, agentTypes, splitKey, splitOpen, setSpli
     const variants = Object.fromEntries(Object.entries(draft.variants ?? {}).filter(([k]) => next.includes(k)));
     patch({ scopes: next.length >= agentTypes.length ? undefined : next, variants: Object.keys(variants).length ? variants : undefined });
   }
-  function openSplit() {
-    // 关键一步：预填基准文本，让用户改差异而不是从零写。
-    const seeded = { ...(draft.variants ?? {}) };
-    scopes.forEach(t => { if (seeded[t] === undefined) seeded[t] = draft.criteria; });
-    patch({ variants: seeded });
-    setSplitOpen(p => ({ ...p, [splitKey]: true }));
-    setSplitTab(p => ({ ...p, [splitKey]: scopes[0] }));
-  }
-  function closeSplit() {
-    patch({ variants: undefined });
-    setSplitOpen(p => ({ ...p, [splitKey]: false }));
-  }
-
   return (
     <>
-      <span className="pt-1 text-[#8794a0]">生效客服类型</span>
-      <div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {agentTypes.map(t => {
-            const on = scopes.includes(t);
-            const only = on && scopes.length === 1;
-            return (
-              <button key={t} onClick={() => toggleType(t)} disabled={only}
-                title={only ? "至少需保留一类客服，否则该规则永不生效" : undefined}
-                className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition ${on ? "border-[#bcd3f7] bg-[#eaf2ff] font-medium text-[#3d6fe0]" : "border-[#dfe5ea] bg-white text-[#98a3af] hover:border-[#c3d0e0]"} ${only ? "cursor-not-allowed opacity-70" : ""}`}>
-                <span className={`grid size-3 place-items-center rounded-sm border ${on ? "border-[#4b7ff0] bg-[#4b7ff0] text-white" : "border-[#cdd6e0] bg-white"}`}>{on && <Check className="size-2"/>}</span>
-                {t}
+      <div className="col-span-2 grid grid-cols-[70px_minmax(120px,160px)_70px_minmax(120px,160px)] items-start gap-x-3">
+        <span className="pt-1 text-[#8794a0]">分值</span>
+        {scoreControl}
+        <span className="pt-1 text-[#8794a0]">生效客服类型</span>
+        <div className="relative">
+        <button
+          type="button"
+          onClick={() => setScopePickerOpen(o => !o)}
+          className="flex h-7 w-full items-center justify-between rounded border border-[#dbe3ee] bg-white px-2 text-left text-[10px] text-[#3e4c5a] outline-none transition hover:border-[#c3d0e0] focus:border-[#4b7ff0]"
+        >
+          <span className="truncate">
+            {allOn ? "全部客服" : scopes.length === 1 ? scopes[0] : `已选择 ${scopes.length} 类客服`}
+          </span>
+          <ChevronRight className={`ml-2 size-3 shrink-0 text-[#8b97a3] transition-transform ${scopePickerOpen ? "rotate-90" : ""}`} />
+        </button>
+        {scopePickerOpen && (
+          <div className="absolute left-0 right-0 top-8 z-30 overflow-hidden rounded-md border border-[#dde5ee] bg-white shadow-[0_8px_24px_rgba(41,53,66,.16)]">
+            <div className="flex items-center justify-between border-b border-[#eef1f4] bg-[#fafbfc] px-2.5 py-1.5">
+              <span className="text-[9px] text-[#8794a0]">可多选</span>
+              <button
+                type="button"
+                onClick={() => patch({ scopes: undefined, variants: undefined })}
+                className="text-[9px] text-[#4b7ff0] hover:underline"
+              >
+                全选
               </button>
-            );
-          })}
-          <button onClick={() => patch({ scopes: allOn ? [agentTypes[0]] : undefined, variants: undefined })}
-            className="ml-1 text-[9px] text-[#8b97a3] hover:text-[#4b7ff0] hover:underline">{allOn ? "改为仅一类" : "全选"}</button>
-        </div>
-        {/* 分叉入口：只在生效 ≥2 类时出现 */}
-        {scopes.length >= 2 && !open && (
-          <button onClick={openSplit} className="mt-1.5 text-[9px] text-[#8b97a3] transition hover:text-[#4b7ff0] hover:underline">
-            为不同客服类型分别设判断标准
-          </button>
+            </div>
+            <div className="max-h-[180px] overflow-auto py-1">
+              {agentTypes.map(t => {
+                const on = scopes.includes(t);
+                const only = on && scopes.length === 1;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => toggleType(t)}
+                    disabled={only}
+                    title={only ? "至少需保留一类客服，否则该规则永不生效" : undefined}
+                    className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[10px] transition ${only ? "cursor-not-allowed opacity-60" : "hover:bg-[#f4f7fb]"}`}
+                  >
+                    <span className={`grid size-3.5 place-items-center rounded-sm border ${on ? "border-[#4b7ff0] bg-[#4b7ff0] text-white" : "border-[#cdd6e0] bg-white"}`}>
+                      {on && <Check className="size-2.5" />}
+                    </span>
+                    <span className={on ? "font-medium text-[#3d6fe0]" : "text-[#465260]"}>{t}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
+      </div>
       </div>
 
       <span className="pt-1 text-[#8794a0]">判断标准</span>
@@ -3081,30 +3092,22 @@ function DimScopeEditor({ draft, patch, agentTypes, splitKey, splitOpen, setSpli
           className="resize-none rounded border border-[#dbe3ee] bg-white px-2 py-1 text-[10px] leading-4 outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"/>
       ) : (
         <div className="rounded border border-[#dbe3ee] bg-white">
-          {/* 类型 tab：标出哪几类已经改过 */}
           <div className="flex flex-wrap items-center gap-1 border-b border-[#eef1f4] bg-[#fafbfc] px-1.5 py-1.5">
             {scopes.map(t => {
-              const changed = (draft.variants?.[t] ?? draft.criteria) !== draft.criteria;
               const active = t === tab;
               return (
-                <button key={t} onClick={() => setSplitTab(p => ({ ...p, [splitKey]: t }))}
-                  className={`flex items-center gap-1 rounded px-2 py-1 text-[10px] transition ${active ? "bg-[#4b7ff0] font-medium text-white" : "text-[#6b7a89] hover:bg-[#eef2f7]"}`}>
+                <button key={t} onClick={() => setTab(t)}
+                  className={`rounded px-2 py-1 text-[10px] transition ${active ? "bg-[#4b7ff0] font-medium text-white" : "text-[#6b7a89] hover:bg-[#eef2f7]"}`}>
                   {t}
-                  <span className={`rounded px-1 text-[8px] ${active ? "bg-white/25 text-white" : changed ? "bg-[#fdf4e6] text-[#b9791d]" : "bg-[#f0f3f8] text-[#a3adba]"}`}>{changed ? "已改" : "同基准"}</span>
                 </button>
               );
             })}
-            <button onClick={closeSplit} className="ml-auto text-[9px] text-[#8b97a3] hover:text-[#d75d5d] hover:underline"
-              title="各类型改动将丢弃，恢复为一份统一的判断标准">恢复统一标准</button>
           </div>
           <textarea value={draft.variants?.[tab] ?? draft.criteria}
             onChange={e => patch({ variants: { ...(draft.variants ?? {}), [tab]: e.target.value } })}
             rows={3}
             placeholder="描述该客服类型下如何判断扣分…"
             className="w-full resize-none border-0 bg-white px-2 py-1.5 text-[10px] leading-4 outline-none placeholder-[#b5bfc9]"/>
-          <div className="border-t border-[#f2f4f7] bg-[#fafbfc] px-2 py-1 text-[9px] text-[#a3adba]">
-            正在编辑「{tab}」的判断标准。未改动的类型将沿用基准标准，不单独保存。
-          </div>
         </div>
       )}
     </>
@@ -3125,6 +3128,7 @@ function RulesList({
   knowledge,
   agentTypes,
   viewAs,
+  setViewAs,
 }: {
   label: string;
   sublabel: string;
@@ -3153,8 +3157,7 @@ function RulesList({
   const [newDimDraft, setNewDimDraft] = useState<NewDimDraft>(emptyDraft);
   // 编辑面板里是否已展开「按客服类型分别设判断标准」，以及当前正在编哪一类的标准。
   // 默认收起——多数规则各类型标准一致，不该让所有人都面对一排 tab。
-  const [splitOpen, setSplitOpen] = useState<Record<string, boolean>>({});
-  const [splitTab, setSplitTab] = useState<Record<string, AgentType>>({});
+  const [detailTypeByKey, setDetailTypeByKey] = useState<Record<string, AgentType>>({});
   const dimRowRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
 
   React.useEffect(() => {
@@ -3226,8 +3229,7 @@ function RulesList({
     if (!newDimDraft.title.trim()) return;
     setCats(prev => prev.map((c, ci) => ci !== catIdx ? c : {
       ...c,
-      // 新增维度默认继承本门类的默认生效范围，省得逐条勾选。
-      dimensions: [...c.dimensions, normalizeDim({ ...newDimDraft, scopes: c.defaultScopes ? [...c.defaultScopes] : undefined })],
+      dimensions: [...c.dimensions, normalizeDim({ ...newDimDraft })],
     }));
     setAddingDim(null);
     setNewDimDraft(emptyDraft);
@@ -3385,56 +3387,23 @@ function RulesList({
                   )}
                 </div>
               )}
-              {/* 门类级默认生效范围：新增维度自动继承，免得逐条勾选。只是默认值，逐条仍可改。 */}
-              {!readOnly && !viewAs && (
-                <div className="flex flex-wrap items-center gap-1.5 border-b border-dashed border-[#eef1f4] bg-[#fcfdfe] px-5 py-2">
-                  <span className="text-[10px] text-[#8794a0]">本门类新增维度默认生效于</span>
-                  {agentTypes.map(t => {
-                    const on = (cat.defaultScopes ?? agentTypes).includes(t);
-                    return (
-                      <button key={t} onClick={e => { e.stopPropagation();
-                        const cur = cat.defaultScopes ?? agentTypes;
-                        const next = on ? cur.filter(x => x !== t) : agentTypes.filter(x => cur.includes(x) || x === t);
-                        if (next.length === 0) return;
-                        updateCat(catIdx, { defaultScopes: next.length >= agentTypes.length ? undefined : next });
-                      }}
-                        className={`rounded-full border px-2 py-0.5 text-[9px] transition ${on ? "border-[#bcd3f7] bg-[#eaf2ff] font-medium text-[#3d6fe0]" : "border-[#dfe5ea] bg-white text-[#a3adba] hover:border-[#c3d0e0]"}`}>
-                        {t}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
               {/* 现有二级维度 */}
               {/* 按客服类型预览时，只留对该类型生效的规则——用来自查「这类客服的客诉，AI 到底加载了什么」 */}
               {cat.dimensions.map((dim, dimIdx) => {
                 if (viewAs && !dimApplies(dim, viewAs)) return null;
                 const key = `${catIdx}-${dimIdx}`;
+                const detailType = detailTypeByKey[key] ?? (viewAs && dimApplies(dim, viewAs) ? viewAs : undefined);
                 const draft = dimDrafts[key];
                 const isEditing = editingKey?.cat === catIdx && editingKey?.dim === dimIdx;
                 const isViewing = viewingKey?.cat === catIdx && viewingKey?.dim === dimIdx;
-                const narrowed = !!dim.scopes && dim.scopes.length > 0 && dim.scopes.length < agentTypes.length;
-                const forkedTypes = variantTypes(dim);
                 return (
                   <div key={dimIdx} ref={el => { dimRowRefs.current[`${catIdx}-${dimIdx}`] = el; }} className={`border-b border-[#f2f4f7] px-5 transition ${isViewing ? "bg-[#eef5ff] ring-1 ring-inset ring-[#4b7ff0]" : ""}`}>
                     {/* 维度行 */}
                     <div className="grid grid-cols-[1.6fr_2.4fr_.5fr_.55fr] items-center gap-3 py-2.5 text-[11px]">
                       <div className="min-w-0">
                         <div className="truncate font-medium text-[#465260]">{dim.title}</div>
-                        {/* 生效范围胶囊：默认「全部客服」为灰字不抢眼，收窄或分叉过才着色，
-                            让人一眼扫出哪些规则被限定了客服类型、哪些还带差异标准。 */}
-                        <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                          <span className={`rounded px-1 py-px text-[9px] ${narrowed ? "bg-[#eaf2ff] font-medium text-[#3d6fe0]" : "bg-[#f4f6f8] text-[#a3adba]"}`}
-                            title={narrowed ? `仅对 ${(dim.scopes ?? []).join("、")} 生效` : "对全部客服类型生效"}>
-                            {scopeLabel(dim, agentTypes)}
-                          </span>
-                          {forkedTypes.length > 0 && (
-                            <span className="rounded bg-[#fdf4e6] px-1 py-px text-[9px] font-medium text-[#b9791d]"
-                              title={`${forkedTypes.join("、")} 使用了不同的判断标准`}>差异 {forkedTypes.length}</span>
-                          )}
-                        </div>
                       </div>
-                      <div className="truncate text-[10px] text-[#8797a5]">{viewAs ? criteriaFor(dim, viewAs) : (dim.standard || "—")}</div>
+                      <div className="truncate text-[10px] text-[#8797a5]">{dim.standard || "—"}</div>
                       <span className="rounded bg-[#fff0f0] px-1.5 py-0.5 text-center text-[10px] text-[#d75d5d]">{dim.score} 分</span>
                       <div className="flex justify-end gap-2">
                         {readOnly ? (
@@ -3463,10 +3432,6 @@ function RulesList({
                     {/* 只读明细（从复审跳转进入） */}
                     {isViewing && !isEditing && (
                       <div className="mb-3 rounded-md border border-[#dfe7f4] bg-[#f8fbff] p-3">
-                        <div className="mb-2 flex items-center justify-between">
-                          <span className="text-[11px] font-medium text-[#496078]">规则明细（只读）</span>
-                          <button onClick={() => setViewingKey(null)} className="text-[10px] text-[#8b97a3] hover:text-[#4b7ff0]">收起</button>
-                        </div>
                         <div className="grid grid-cols-[70px_1fr] gap-x-3 gap-y-2 text-[10px]">
                           <span className="text-[#8794a0]">维度名称</span>
                           <span className="text-[#465260]">{dim.title}</span>
@@ -3476,27 +3441,21 @@ function RulesList({
                           <span className="leading-relaxed text-[#4d5966]">{dim.standard || "—"}</span>
                           <span className="text-[#8794a0]">生效客服类型</span>
                           <span className="flex flex-wrap gap-1">
-                            {(dim.scopes && dim.scopes.length > 0 ? dim.scopes : agentTypes).map(t => (
-                              <span key={t} className="rounded-full bg-[#eaf2ff] px-1.5 py-px text-[9px] text-[#3d6fe0]">{t}</span>
-                            ))}
+                            {(dim.scopes && dim.scopes.length > 0 ? dim.scopes : agentTypes).map(t => {
+                              const active = detailType === t;
+                              return (
+                                <button
+                                  key={t}
+                                  onClick={() => setDetailTypeByKey(prev => ({ ...prev, [key]: t }))}
+                                  className={`rounded-full px-1.5 py-px text-[9px] transition ${active ? "bg-[#4b7ff0] font-medium text-white" : "bg-[#eaf2ff] text-[#3d6fe0] hover:bg-[#dceaff]"}`}
+                                >
+                                  {t}
+                                </button>
+                              );
+                            })}
                           </span>
                           <span className="text-[#8794a0]">判断标准</span>
-                          {forkedTypes.length === 0 ? (
-                            <span className="leading-relaxed text-[#4d5966]">{dim.criteria || "—"}</span>
-                          ) : (
-                            // 分叉过的规则逐类型列出实际加载的标准，与基准并列，便于核对差异。
-                            <div className="space-y-1.5">
-                              {(dim.scopes && dim.scopes.length > 0 ? dim.scopes : agentTypes).map(t => {
-                                const own = forkedTypes.includes(t);
-                                return (
-                                  <div key={t} className="flex gap-1.5">
-                                    <span className={`mt-px shrink-0 rounded px-1 py-px text-[9px] ${own ? "bg-[#fdf4e6] font-medium text-[#b9791d]" : "bg-[#f0f3f8] text-[#a3adba]"}`}>{t}{own ? "" : "·同基准"}</span>
-                                    <span className="min-w-0 leading-relaxed text-[#4d5966]">{criteriaFor(dim, t) || "—"}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
+                          <span className="leading-relaxed text-[#4d5966]">{(detailType ? criteriaFor(dim, detailType) : dim.criteria) || "—"}</span>
                         </div>
                       </div>
                     )}
@@ -3513,13 +3472,11 @@ function RulesList({
                         <div className="grid grid-cols-[70px_1fr] gap-x-3 gap-y-2 text-[10px]">
                           <span className="pt-1 text-[#8794a0]">维度名称</span>
                           <input value={draft.title} onChange={e => setDimDrafts(p => ({ ...p, [key]: { ...p[key], title: e.target.value } }))} className="h-6 rounded border border-[#dbe3ee] bg-white px-2 text-[10px] outline-none focus:border-[#4b7ff0]"/>
-                          <span className="pt-1 text-[#8794a0]">分值</span>
-                          <input value={draft.score} onChange={e => setDimDrafts(p => ({ ...p, [key]: { ...p[key], score: e.target.value } }))} className="h-6 w-16 rounded border border-[#dbe3ee] bg-white px-2 text-[10px] outline-none focus:border-[#4b7ff0]"/>
                           <span className="pt-1 text-[#8794a0]">说明</span>
                           <textarea value={draft.standard} onChange={e => setDimDrafts(p => ({ ...p, [key]: { ...p[key], standard: e.target.value } }))} rows={2} className="resize-none rounded border border-[#dbe3ee] bg-white px-2 py-1 text-[10px] leading-4 outline-none focus:border-[#4b7ff0]"/>
                           <DimScopeEditor draft={draft} patch={pt => setDimDrafts(p => ({ ...p, [key]: { ...p[key], ...pt } }))}
-                            agentTypes={agentTypes} splitKey={key}
-                            splitOpen={splitOpen} setSplitOpen={setSplitOpen} splitTab={splitTab} setSplitTab={setSplitTab}/>
+                            scoreControl={<input value={draft.score} onChange={e => setDimDrafts(p => ({ ...p, [key]: { ...p[key], score: e.target.value } }))} className="h-6 w-full rounded border border-[#dbe3ee] bg-white px-2 text-[10px] outline-none focus:border-[#4b7ff0]"/>}
+                            agentTypes={agentTypes} viewAs={viewAs}/>
                         </div>
                       </div>
                     )}
@@ -3540,13 +3497,11 @@ function RulesList({
                   <div className="grid grid-cols-[70px_1fr] gap-x-3 gap-y-2 text-[10px]">
                     <span className="pt-1 text-[#8794a0]">维度名称 <span className="text-[#e59735]">*</span></span>
                     <input autoFocus value={newDimDraft.title} onChange={e => setNewDimDraft(p => ({ ...p, title: e.target.value }))} placeholder="例：敷衍用户" className="h-6 rounded border border-[#dbe3ee] bg-white px-2 text-[10px] outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"/>
-                    <span className="pt-1 text-[#8794a0]">分值</span>
-                    <input value={newDimDraft.score} onChange={e => setNewDimDraft(p => ({ ...p, score: e.target.value }))} placeholder="-2" className="h-6 w-16 rounded border border-[#dbe3ee] bg-white px-2 text-[10px] outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"/>
                     <span className="pt-1 text-[#8794a0]">说明</span>
                     <textarea value={newDimDraft.standard} onChange={e => setNewDimDraft(p => ({ ...p, standard: e.target.value }))} rows={2} placeholder="简述该维度的质检说明…" className="resize-none rounded border border-[#dbe3ee] bg-white px-2 py-1 text-[10px] leading-4 outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"/>
                     <DimScopeEditor draft={newDimDraft} patch={pt => setNewDimDraft(p => ({ ...p, ...pt }))}
-                      agentTypes={agentTypes} splitKey={`new-${catIdx}`}
-                      splitOpen={splitOpen} setSplitOpen={setSplitOpen} splitTab={splitTab} setSplitTab={setSplitTab}/>
+                      scoreControl={<input value={newDimDraft.score} onChange={e => setNewDimDraft(p => ({ ...p, score: e.target.value }))} placeholder="-2" className="h-6 w-full rounded border border-[#dbe3ee] bg-white px-2 text-[10px] outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"/>}
+                      agentTypes={agentTypes} viewAs={viewAs}/>
                   </div>
                 </div>
               ) : !readOnly && (
@@ -3566,7 +3521,59 @@ function RulesList({
   );
 }
 
-function PrinciplesList({ principles, setPrinciples, readOnly }: { principles: Principle[]; setPrinciples: React.Dispatch<React.SetStateAction<Principle[]>>; readOnly?: boolean }) {
+function PrincipleScopePicker({ scopes, agentTypes, onChange }: {
+  scopes?: AgentType[];
+  agentTypes: AgentType[];
+  onChange: (scopes: AgentType[] | undefined) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = scopes && scopes.length > 0 ? scopes : agentTypes;
+  const allOn = selected.length >= agentTypes.length;
+
+  function toggle(t: AgentType) {
+    const next = selected.includes(t) ? selected.filter(x => x !== t) : [...agentTypes.filter(x => selected.includes(x) || x === t)];
+    if (next.length === 0) return;
+    onChange(next.length >= agentTypes.length ? undefined : next);
+  }
+
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(v => !v)}
+        className="flex h-7 w-full items-center justify-between rounded border border-[#dbe3ee] bg-white px-2 text-left text-[10px] text-[#3e4c5a] outline-none hover:border-[#c3d0e0] focus:border-[#4b7ff0]">
+        <span className="truncate">{allOn ? "全部客服" : selected.length === 1 ? selected[0] : `已选择 ${selected.length} 类客服`}</span>
+        <ChevronRight className={`ml-2 size-3 shrink-0 text-[#8b97a3] transition-transform ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 top-8 z-30 overflow-hidden rounded-md border border-[#dde5ee] bg-white shadow-[0_8px_24px_rgba(41,53,66,.16)]">
+          <div className="flex items-center justify-between border-b border-[#eef1f4] bg-[#fafbfc] px-2.5 py-1.5">
+            <span className="text-[9px] text-[#8794a0]">可多选</span>
+            <button type="button" onClick={() => onChange(undefined)} className="text-[9px] text-[#4b7ff0] hover:underline">全选</button>
+          </div>
+          <div className="max-h-[180px] overflow-auto py-1">
+            {agentTypes.map(t => {
+              const on = selected.includes(t);
+              const only = on && selected.length === 1;
+              return (
+                <button key={t} type="button" onClick={() => toggle(t)} disabled={only}
+                  className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[10px] transition ${only ? "cursor-not-allowed opacity-60" : "hover:bg-[#f4f7fb]"}`}>
+                  <span className={`grid size-3.5 place-items-center rounded-sm border ${on ? "border-[#4b7ff0] bg-[#4b7ff0] text-white" : "border-[#cdd6e0] bg-white"}`}>{on && <Check className="size-2.5" />}</span>
+                  <span className={on ? "font-medium text-[#3d6fe0]" : "text-[#465260]"}>{t}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+function PrinciplesList({ principles, setPrinciples, readOnly, agentTypes, viewAs }: {
+  principles: Principle[];
+  setPrinciples: React.Dispatch<React.SetStateAction<Principle[]>>;
+  readOnly?: boolean;
+  agentTypes: AgentType[];
+  viewAs?: AgentType | null;
+}) {
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [draft, setDraft] = useState<Principle>({ title: "", content: "" });
   const [adding, setAdding] = useState(false);
@@ -3578,12 +3585,12 @@ function PrinciplesList({ principles, setPrinciples, readOnly }: { principles: P
   }
   function saveEdit(idx: number) {
     if (!draft.title.trim() || !draft.content.trim()) return;
-    setPrinciples(prev => prev.map((p, i) => i === idx ? { title: draft.title.trim(), content: draft.content.trim() } : p));
+    setPrinciples(prev => prev.map((p, i) => i === idx ? { title: draft.title.trim(), content: draft.content.trim(), scopes: draft.scopes } : p));
     setEditingIdx(null);
   }
   function saveNew() {
     if (!draft.title.trim() || !draft.content.trim()) return;
-    setPrinciples(prev => [...prev, { title: draft.title.trim(), content: draft.content.trim() }]);
+    setPrinciples(prev => [...prev, { title: draft.title.trim(), content: draft.content.trim(), scopes: draft.scopes }]);
     setAdding(false);
     setDraft({ title: "", content: "" });
   }
@@ -3591,6 +3598,8 @@ function PrinciplesList({ principles, setPrinciples, readOnly }: { principles: P
     setPrinciples(prev => prev.filter((_, i) => i !== idx));
     if (editingIdx === idx) setEditingIdx(null);
   }
+
+  const visibleCount = viewAs ? principles.filter(p => principleApplies(p, viewAs)).length : principles.length;
 
   return (
     <div className="rounded-lg border border-[#e1e5e9] bg-white">
@@ -3611,11 +3620,12 @@ function PrinciplesList({ principles, setPrinciples, readOnly }: { principles: P
         这些原则会作为 AI 质检的「打分总则」，在应用每条具体规则之前统一遵循。请用清晰、可执行的自然语言描述，例如「默认满分，见问题才扣」。
       </div>
 
-      {principles.length === 0 && !adding && (
-        <div className="px-4 py-8 text-center text-[11px] text-[#b0bbc8]">暂无评分原则，点击右上角「添加原则」新建</div>
+      {visibleCount === 0 && !adding && (
+        <div className="px-4 py-8 text-center text-[11px] text-[#b0bbc8]">{viewAs ? `暂无适配「${viewAs}」的评分原则` : "暂无评分原则，点击右上角「添加原则」新建"}</div>
       )}
 
       {principles.map((p, idx) => {
+        if (viewAs && !principleApplies(p, viewAs)) return null;
         const isEditing = editingIdx === idx;
         return (
           <div key={idx} className="border-b border-[#eef1f4] px-5 py-3 last:border-b-0">
@@ -3631,6 +3641,8 @@ function PrinciplesList({ principles, setPrinciples, readOnly }: { principles: P
                 <div className="grid grid-cols-[70px_1fr] gap-x-3 gap-y-2 text-[10px]">
                   <span className="pt-1 text-[#8794a0]">原则名称</span>
                   <input value={draft.title} onChange={e => setDraft(d => ({ ...d, title: e.target.value }))} className="h-6 rounded border border-[#dbe3ee] bg-white px-2 text-[10px] outline-none focus:border-[#4b7ff0]"/>
+                  <span className="pt-1 text-[#8794a0]">适配客服类型</span>
+                  <PrincipleScopePicker scopes={draft.scopes} agentTypes={agentTypes} onChange={scopes => setDraft(d => ({ ...d, scopes }))}/>
                   <span className="pt-1 text-[#8794a0]">原则说明</span>
                   <textarea value={draft.content} onChange={e => setDraft(d => ({ ...d, content: e.target.value }))} rows={3} className="resize-none rounded border border-[#dbe3ee] bg-white px-2 py-1 text-[10px] leading-4 outline-none focus:border-[#4b7ff0]"/>
                 </div>
@@ -3664,6 +3676,8 @@ function PrinciplesList({ principles, setPrinciples, readOnly }: { principles: P
           <div className="grid grid-cols-[70px_1fr] gap-x-3 gap-y-2 text-[10px]">
             <span className="pt-1 text-[#8794a0]">原则名称 <span className="text-[#e59735]">*</span></span>
             <input value={draft.title} onChange={e => setDraft(d => ({ ...d, title: e.target.value }))} placeholder="如：默认满分，见问题才扣" className="h-6 rounded border border-[#dbe3ee] bg-white px-2 text-[10px] outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"/>
+            <span className="pt-1 text-[#8794a0]">适配客服类型</span>
+            <PrincipleScopePicker scopes={draft.scopes} agentTypes={agentTypes} onChange={scopes => setDraft(d => ({ ...d, scopes }))}/>
             <span className="pt-1 text-[#8794a0]">原则说明 <span className="text-[#e59735]">*</span></span>
             <textarea value={draft.content} onChange={e => setDraft(d => ({ ...d, content: e.target.value }))} rows={3} placeholder="用清晰、可执行的自然语言描述该原则…" className="resize-none rounded border border-[#dbe3ee] bg-white px-2 py-1 text-[10px] leading-4 outline-none focus:border-[#4b7ff0] placeholder-[#b5bfc9]"/>
           </div>
@@ -3865,7 +3879,7 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, pri
 }) {
   const inCommon = targetRuleName ? commonCats.some(c => c.dimensions.some(d => d.title === targetRuleName)) : false;
   const inPrivate = targetRuleName ? privateCats.some(c => c.dimensions.some(d => d.title === targetRuleName)) : false;
-  const [tab, setTab] = useState<"common" | "private" | "principle" | "knowledge" | "agentType">("common");
+  const [tab, setTab] = useState<"common" | "private" | "principle">("common");
   const [historyOpen, setHistoryOpen] = useState(false);
   // 「按客服类型查看」：选中某一类后，通用/专用列表只留对它生效的规则，判断标准也换成该类实际加载的那份，
   // 用来自查「这类客服的客诉，AI 到底会加载哪些规则」。null＝不过滤，看全量配置。
@@ -3914,6 +3928,18 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, pri
           <p className="mt-0.5 text-[10px] text-[#8b96a3]">{readOnly ? "仅业务管理者/超级管理者可修改规则，你可查看全部内容" : "配置规则门类、评分维度与扣分标准"}</p>
         </div>
         <div className="flex items-center gap-2">
+          {(tab === "common" || tab === "private" || tab === "principle") && (
+            <select
+              aria-label="规则视角"
+              title="切换客服类型视角"
+              value={viewAs ?? ""}
+              onChange={e => setViewAs(e.target.value === "" ? null : e.target.value)}
+              className="h-7 max-w-[120px] rounded border border-[#dbe3ee] bg-[#fafbfd] px-2 text-[11px] text-[#3e4c5a] outline-none hover:border-[#c3d0e0] focus:border-[#4b7ff0] focus:bg-white"
+            >
+              <option value="">全部</option>
+              {agentTypes.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          )}
           {/* 历史版本入口 */}
           <div className="relative" onClick={e => e.stopPropagation()}>
             <button onClick={() => setHistoryOpen(o => !o)} className="flex items-center gap-1 rounded-md border border-[#d9e2ee] bg-white px-2.5 py-1.5 text-[10px] text-[#5b6b7b] hover:bg-[#f2f6fb]">
@@ -3995,33 +4021,14 @@ function RulesPage({ commonCats, setCommonCats, privateCats, setPrivateCats, pri
           <button onClick={() => setTab("principle")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "principle" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>评分原则</button>
           <button onClick={() => setTab("common")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "common" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>通用质检规则列表</button>
           <button onClick={() => setTab("private")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "private" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>专用质检规则列表</button>
-          <button onClick={() => setTab("knowledge")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "knowledge" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>知识库</button>
-          <button onClick={() => setTab("agentType")} className={`rounded px-3 py-1.5 text-[11px] transition ${tab === "agentType" ? "bg-[#eaf2ff] font-medium text-[#3e72df]" : "text-[#778594]"}`}>客服类型</button>
         </div>
-        {/* 按客服类型查看：只在规则列表页出现，用来核对某一类客服实际加载的规则集。 */}
-        {(tab === "common" || tab === "private") && (
-          <div className="mb-3 flex items-center justify-between rounded-lg border border-[#e1e5e9] bg-white px-4 py-2">
-            <div>
-              <div className="text-[11px] font-medium text-[#35414e]">规则视角</div>
-              <div className="text-[10px] text-[#8794a0]">{viewAs ? `仅显示对「${viewAs}」生效的规则，且判断标准已切换为该客服类型实际加载的版本。` : "显示全量规则配置。按需为不同客服类型分配生效范围与差异标准。"}</div>
-            </div>
-            <select value={viewAs ?? ""} onChange={e => setViewAs(e.target.value === "" ? null : e.target.value)}
-              className="h-7 rounded border border-[#dbe3ee] bg-[#fafbfd] px-2 text-[11px] text-[#3e4c5a] outline-none hover:border-[#c3d0e0] focus:border-[#4b7ff0] focus:bg-white">
-              <option value="">全部配置</option>
-              {agentTypes.map(t => <option key={t} value={t}>以 {t} 视角查看</option>)}
-            </select>
-          </div>
-        )}
+        {/* 规则视角已移至右上角，避免占用内容区域。 */}
         {tab === "common" ? (
           <RulesList label="通用规则" sublabel="适用于全部客服会话的基础质检要求" cats={shownCommon} setCats={isPreview ? setPreviewCommon : setCommonCats} targetRuleName={tab === "common" && !isPreview ? targetRuleName : null} targetEditable={targetEditable} onTargetConsumed={onTargetConsumed} onRulesModified={onRulesModified} readOnly={!canEdit} agentTypes={agentTypes} viewAs={viewAs}/>
         ) : tab === "private" ? (
           <RulesList label="专用规则" sublabel="仅对指定业务线、活动或场景生效" showTags knowledge={knowledge} cats={shownPrivate} setCats={isPreview ? setPreviewPrivate : setPrivateCats} targetRuleName={tab === "private" && !isPreview ? targetRuleName : null} targetEditable={targetEditable} onTargetConsumed={onTargetConsumed} onRulesModified={onRulesModified} readOnly={!canEdit} agentTypes={agentTypes} viewAs={viewAs}/>
-        ) : tab === "knowledge" ? (
-          <KnowledgeLibrary knowledge={knowledge} onAdd={onAddKnowledge} onUpdate={onUpdateKnowledge} onDelete={onDeleteKnowledge} readOnly={!canEdit} />
-        ) : tab === "agentType" ? (
-          <AgentTypeList types={agentTypes} refCount={agentTypeRefCount} onAdd={onAddAgentType} onRename={onRenameAgentType} onDelete={onDeleteAgentType} readOnly={!canEdit}/>
         ) : (
-          <PrinciplesList principles={shownPrinciples} setPrinciples={setPrinciples} readOnly={!canEdit}/>
+          <PrinciplesList principles={shownPrinciples} setPrinciples={setPrinciples} readOnly={!canEdit} agentTypes={agentTypes} viewAs={viewAs}/>
         )}
       </div>
 
